@@ -155,14 +155,17 @@ export async function addProvider(
       }
     }
 
+    // Persist a MINIMAL stub — deliberately no `models` block. An empty/absent
+    // models map is exactly what makes the provider discovery-eligible, so the
+    // model list is (re)discovered on every load instead of being frozen into
+    // the user's config file. `modelCount` above is only used to validate the
+    // endpoint and report how many models were found.
     const providerEntry: ProviderConfig = {
       name: params.providerId,
       npm: "@ai-sdk/openai-compatible",
-      api: baseURL,
       options: { baseURL },
       dynamic: true,
       displayStyle,
-      models,
     }
 
     return {

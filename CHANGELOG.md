@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-07-28
+
+### Fixed
+- `/add-provider` and the `add-provider` agent tool now persist the new provider to opencode's **global config file** (the one opencode actually loads) instead of via `client.config.update`, which wrote an unloaded `<cwd>/config.json`. Providers added through the UI no longer disappear on restart.
+
+### Added
+- `/delete-provider` TUI slash command and `delete-provider` agent tool: remove a provider from the global config (comments preserved) and delete that provider's stored credential from the auth store.
+- `src/opencode-config.ts`: comment-preserving global-config writer (via `jsonc-parser`) plus an auth-store editor for credential removal.
+
+### Changed
+- `/add-provider` now persists a minimal provider stub (no frozen `models` block), keeping the model list discovery-driven and the user's config clean.
+
 ## [2.2.0] - 2026-05-23
 
 ### Added

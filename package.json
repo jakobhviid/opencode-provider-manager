@@ -1,6 +1,6 @@
 {
   "name": "opencode-dynamic-custom-providers",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Dynamic model discovery for OpenAI-compatible providers in OpenCode with models.dev enrichment",
   "type": "module",
   "main": "./dist/server.js",
@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node tests/security.test.mjs && node tests/discovery.test.mjs",
+    "test": "npm run build && node tests/security.test.mjs && node tests/discovery.test.mjs && node tests/opencode-config.test.mjs",
     "prepare": "npm run build",
     "prepublishOnly": "npm test"
   },
@@ -37,14 +37,18 @@
     "discovery",
     "models.dev"
   ],
-  "author": "b3nw",
+  "author": "Jakob Hviid",
+  "contributors": [
+    "b3nw (original author)"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/b3nw/opencode-dynamic-custom-providers.git"
+    "url": "git+ssh://git@github.com/jakobhviid/opencode-dynamic-custom-providers.git"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.0"
+    "@opencode-ai/plugin": "^1.14.0",
+    "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
     "@opencode-ai/sdk": "^1.14.0",

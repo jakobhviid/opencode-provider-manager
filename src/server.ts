@@ -3,6 +3,7 @@ import { tool } from "@opencode-ai/plugin"
 import { discoverAndEnrich } from "./discovery.js"
 import { sanitizeErrorMessage, sanitizeUrl } from "./security.js"
 import { reloadAllProviders, addProvider, validateAddProviderParams, persistProviderApiKey } from "./commands.js"
+import { upsertProvider, removeProvider, removeCredential } from "./opencode-config.js"
 import { shouldDiscover, getApiKey, type ProviderConfig, type OpenCodeConfig } from "./types.js"
 
 export const id = "opencode-dynamic-custom-providers"
@@ -161,12 +162,34 @@ export const server: Plugin = async ({ client }) => {
             },
           )
 
-          providers[args.providerId] = result.providerEntry
-          await client.config.update({
-            body: { provider: providers } as never,
-          })
+          // Persist to the global config file opencode actually loads. (Works
+          // around client.config.update writing an unloaded <cwd>/config.json.)
+          const configFile = upsertProvider(args.providerId, result.providerEntry)
 
-          return result.message
+          return `${result.message} Persisted to ${configFile}. Restart opencode to use it.`
+        },
+      }),
+
+      "delete-provider": tool({
+        description:
+          "Remove a custom provider from the opencode config and delete its stored credential.",
+        args: {
+          providerId: tool.schema.string().describe("ID of the provider to remove"),
+        },
+        async execute(args) {
+          const { file, existed } = removeProvider(args.providerId)
+          const credentialRemoved = removeCredential(args.providerId)
+          if (!existed) {
+            return (
+              `Provider '${args.providerId}' not found in ${file}.` +
+              (credentialRemoved ? " Removed a stray credential." : "")
+            )
+          }
+          return (
+            `Removed provider '${args.providerId}'` +
+            (credentialRemoved ? " and its stored credential" : "") +
+            ` from ${file}. Restart opencode to apply.`
+          )
         },
       }),
     },

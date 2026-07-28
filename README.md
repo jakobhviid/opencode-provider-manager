@@ -2,6 +2,10 @@
 
 This plugin extends OpenCode with dynamic model discovery for OpenAI-compatible providers, enriched with metadata from [models.dev](https://models.dev).
 
+> **This is a fork** of [b3nw/opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers) with two changes:
+> 1. Providers added via `/add-provider` now persist to the **global opencode config that opencode actually loads**. Upstream wrote them via `client.config.update`, which lands in an unloaded `<cwd>/config.json`, so added providers vanished on restart.
+> 2. A new **`/delete-provider`** slash command (and `delete-provider` agent tool) removes a provider and deletes its stored credential.
+
 ## Features
 
 ### 1. Automatic Model Discovery at Startup
@@ -83,6 +87,9 @@ For explicit opt-in, set `"dynamic": true`:
 }
 ```
 
+### Removing a Provider
+Run `/delete-provider` in the TUI (or ask the agent to use the `delete-provider` tool). It removes the provider block from your global `opencode.jsonc` (comments preserved) and deletes that provider's stored credential from the auth store. A credential supplied via `{env:...}` or otherwise shared is left untouched.
+
 ### API Key Authentication
 
 API keys can be set in three ways:
@@ -136,3 +143,11 @@ cd opencode-dynamic-custom-providers
 npm install
 npm run build
 ```
+
+## AI disclosure
+
+Parts of this codebase were written with the assistance of AI coding agents (Claude Code, opencode, and others). All changes were reviewed by the maintainer.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Originally created by [b3nw](https://github.com/b3nw); fork modifications by Jakob Hviid.

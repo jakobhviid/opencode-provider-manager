@@ -8,6 +8,7 @@ import {
   validateProviderId,
   persistProviderApiKey,
 } from "./commands.js"
+import { upsertProvider, removeProvider, removeCredential } from "./opencode-config.js"
 
 export const id = "opencode-dynamic-custom-providers"
 
@@ -190,10 +191,66 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           },
         )
 
-        providers[providerId] = result.providerEntry
-        await api.client.config.update({ config: { provider: providers } as never })
+        // Persist to the global config file opencode actually loads. (Works around
+        // client.config.update, which writes an unloaded <cwd>/config.json.)
+        const configFile = upsertProvider(providerId, result.providerEntry)
 
-        api.ui.toast({ message: result.message, variant: "success" })
+        api.ui.toast({
+          message: `Added '${providerId}' (${result.modelCount} models discovered) to ${configFile}. Restart opencode to use it.`,
+          variant: "success",
+        })
+      },
+    },
+    {
+      title: "Delete Provider",
+      value: "delete-provider",
+      description: "Remove a custom provider and delete its stored credential",
+      slash: {
+        name: "delete-provider",
+      },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+
+        const providerId = await showSelect<string>(
+          api,
+          "Delete which provider?",
+          ids.map((id) => ({
+            title: id,
+            value: id,
+            description: providers[id]?.options?.baseURL,
+          })),
+        )
+        if (!providerId) return
+
+        const confirmed = await showConfirm(
+          api,
+          "Delete provider",
+          `Remove '${providerId}' from your opencode config and delete its stored credential? This cannot be undone.`,
+        )
+        if (!confirmed) return
+
+        const { file, existed } = removeProvider(providerId)
+        const credentialRemoved = removeCredential(providerId)
+
+        if (!existed) {
+          api.ui.toast({
+            message: `'${providerId}' was not in ${file}${credentialRemoved ? " (removed a stray credential)" : ""}.`,
+            variant: "warning",
+          })
+          return
+        }
+
+        api.ui.toast({
+          message: `Removed '${providerId}'${credentialRemoved ? " and its credential" : ""} from ${file}. Restart opencode to apply.`,
+          variant: "success",
+        })
       },
     },
   ])
