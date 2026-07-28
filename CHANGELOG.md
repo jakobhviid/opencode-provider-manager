@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2026-07-28
+
+### Changed
+- `--llm` and the command help now spell out an explicit automation/idempotency contract for declarative installers (temper, Ansible, cloud-init, LLM agents): prerequisites and ordering (opencode), the non-interactive / user-scope / idempotent guarantees, the exact files and paths touched, the `--json` schema and its "already applied" (`changed: false`) signal, a read-only drift check, reversal, and upgrade behavior. No behavior change — the tool already worked this way; this makes it usable without reading the source.
+
 ## [2.7.0] - 2026-07-28
 
 ### Added

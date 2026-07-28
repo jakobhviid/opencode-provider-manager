@@ -24,6 +24,14 @@ const REPO_URL: &str = "https://github.com/jakobhviid/opencode-provider-manager"
     name = "opencode-provider-manager",
     version,
     about = "Install the opencode-provider-manager plugin into opencode (and remove it again).",
+    long_about = "Install the opencode-provider-manager plugin into opencode, and remove it again.\n\n\
+This CLI manages only the WIRING: it adds/removes the plugin's package directory in \
+opencode's `plugin` array (comment-preserving) and installs shell completions. The plugin \
+itself is the JavaScript package Homebrew installs and upgrades; opencode is a prerequisite \
+(the Homebrew formula depends on it). All commands are idempotent, non-interactive, and \
+user-scope (never sudo). Use `--json` for machine-readable output; a full \
+automation/idempotency contract (files touched, exit codes, --json schema, drift check, \
+upgrade behavior) is in the WORKFLOWS section printed by --llm.",
     disable_help_subcommand = true
 )]
 struct Cli {
@@ -40,6 +48,18 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Wire the plugin into opencode's config and install shell completions.
+    ///
+    /// Idempotent and non-interactive: re-running when already wired is a no-op
+    /// ("nothing to do", exit 0); it never prompts (pass --shell to skip $SHELL
+    /// detection). Adds the plugin's package directory to the `plugin` array in
+    /// opencode.jsonc and tui.json (comment-preserving, backing each up to *.bak
+    /// first) and installs completions; creates the config file if absent. Writes
+    /// only under $HOME — never needs sudo. Requires opencode and the plugin
+    /// package present first (the Homebrew formula depends on opencode); if the
+    /// plugin package can't be found it exits non-zero and changes nothing.
+    /// `--json` prints {"plugin","files":[{"file","changed","backup"}],"completions"};
+    /// all files "changed":false means it was already applied. Restart opencode
+    /// afterwards to load the plugin.
     #[command(visible_alias = "install")]
     Setup {
         /// Use this plugin package dir instead of the brew-installed one.
@@ -50,6 +70,11 @@ enum Cmd {
         shell: Option<Shell>,
     },
     /// Remove the plugin from opencode's config (brew's files are left in place).
+    ///
+    /// Idempotent and non-interactive. Removes the plugin entry from opencode.jsonc
+    /// and tui.json (backing up first); leaves the Homebrew files, the installed
+    /// shell completions, and the plugin's settings.json untouched. Pass --path if
+    /// the brew package is already gone. Restart opencode to apply.
     Uninstall {
         /// The plugin package dir that was wired in (default: the brew one).
         #[arg(long)]
