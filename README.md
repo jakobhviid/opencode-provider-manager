@@ -64,6 +64,28 @@ If your opencode builds plugins on install, you can point it straight at the rep
 opencode plugin git+ssh://git@github.com/jakobhviid/opencode-provider-manager.git
 ```
 
+## Walkthrough
+
+A typical first run, all from the opencode TUI. Each step auto-applies in place (see [Applying changes](#applying-changes)), so you don't restart between them.
+
+1. **Add a provider** — run `/add-provider`:
+   - *Name* → `my-proxy` (the short name you'll pick it by later)
+   - *Base URL* → `https://api.my-proxy.com/v1`
+   - *API key* → paste it, or leave blank if the endpoint needs none
+   - *Display style* → **Exact model IDs** (best for proxies)
+
+   It validates the endpoint, discovers the models, writes the provider to your `opencode.jsonc`, and reloads — the models appear in opencode's picker right away.
+
+2. **Check what you've got** — `/providers` lists each provider with its base URL, where its key comes from (config / auth store / env / none), and any filters or overrides. `/test-provider` re-checks an endpoint and reports how many models it returns — handy when a key looks wrong or a local server is down.
+
+3. **Trim the noise** — if the endpoint exposes models you don't want (embeddings, deprecated variants), run `/set-model-filter` and add exclude patterns like `embed, whisper` (or an include list like `coder, qwen` to keep only those).
+
+4. **Fix a wrong context window** — if a self-hosted model shows the default 128k because models.dev doesn't know it, run `/override-model`, pick the model, and choose the real context (it offers whatever the endpoint reports, the models.dev value, common presets, or a custom number).
+
+5. **Set your default** — `/set-default-model` → pick the provider → pick the model. That becomes opencode's default for new sessions.
+
+Later on: `/add-provider-auth` sets a key on an existing provider and `/remove-provider-auth` clears it; `/edit-provider` changes a base URL; `/toggle-provider` disables discovery without removing the provider; `/remove-provider` deletes a provider and its key. Prefer to apply changes yourself? `/toggle-auto-reload` turns the in-place reload off.
+
 ## Configuration
 
 ### Add a provider — TUI
