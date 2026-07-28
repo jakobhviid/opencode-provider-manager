@@ -165,6 +165,10 @@ See [AGENTS.md](AGENTS.md) for repository conventions.
 
 Originally created by [b3nw](https://github.com/b3nw) as [opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers). This fork, maintained by Jakob Hviid, adds provider persistence to the global config, provider/key-management commands, and clearer prompts. The original MIT copyright is retained in [LICENSE](LICENSE).
 
+## AI disclosure
+
+Parts of this codebase were written with the assistance of AI coding agents (Claude Code, opencode, and others). All changes were reviewed by the maintainer.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Copyright © b3nw (original) and Jakob Hviid (fork).
