@@ -1,0 +1,11 @@
+[package]
+name = "opencode-provider-manager-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+
+[dependencies]
+anyhow = "1"
+jsonc-parser = "0.23"
+serde_json = "1"

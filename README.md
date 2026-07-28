@@ -30,9 +30,28 @@ A standalone [opencode](https://opencode.ai) plugin for OpenAI-compatible provid
 
 ## Installation
 
-This fork is **not** published to npm (that package name belongs to upstream), so install it from source.
+Two ways to install. **Homebrew is recommended** — one line, and `brew upgrade` keeps the plugin current. If you don't use Homebrew, install from a Git clone.
 
-### Local clone (recommended)
+### Homebrew (macOS / Linux) — recommended
+
+```bash
+brew install jakobhviid/tap/opencode-provider-manager
+opencode-provider-manager setup      # wire the plugin into opencode's config
+```
+
+Restart opencode and you're done. `setup` (alias `install`) is idempotent: it adds the plugin to your `opencode.jsonc` **and** `tui.json` (preserving comments), installs shell completions, and points opencode at Homebrew's stable path — so updating is just:
+
+```bash
+brew upgrade opencode-provider-manager   # automatic on Bazzite; enable `brew autoupdate --upgrade` on macOS
+```
+
+then restart opencode — no need to re-run `setup`. Uninstall with `opencode-provider-manager uninstall` (then `brew uninstall opencode-provider-manager`).
+
+> `opencode-provider-manager` (the command) is a small Rust helper that manages only the *wiring*; the plugin itself is the JavaScript package Homebrew installs and upgrades. Run `opencode-provider-manager --llm` for a full machine-readable guide.
+
+### From a Git clone (any platform)
+
+This fork isn't published to npm, so without Homebrew you install from source:
 
 ```bash
 git clone git@github.com:jakobhviid/opencode-provider-manager.git
@@ -54,15 +73,7 @@ opencode plugin "$(pwd)"
 }
 ```
 
-The path is a live reference: after `npm run build`, restart opencode to pick up changes.
-
-### From Git
-
-If your opencode builds plugins on install, you can point it straight at the repo:
-
-```bash
-opencode plugin git+ssh://git@github.com/jakobhviid/opencode-provider-manager.git
-```
+The path is a live reference: after `git pull && npm run build`, restart opencode to pick up changes.
 
 ## Walkthrough
 

@@ -5,3 +5,9 @@ dist/
 config.json
 .opencode/
 TODO.md
+
+# Rust installer build output (Cargo.lock IS committed)
+installer/target/
+# CI plugin-staging output
+staged/
+plugin.tar.gz
