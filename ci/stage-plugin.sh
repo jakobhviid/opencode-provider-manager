@@ -36,6 +36,8 @@ pkgs="$(node -e '
   console.log([...s].sort().join("\n"));
 ' "$meta")"
 
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"   # absolutize, so the smoke-import file:// URLs are valid
 dest="$out/plugin"
 rm -rf "$dest"; mkdir -p "$dest"
 cp package.json "$dest/"
@@ -48,8 +50,8 @@ done <<< "$pkgs"
 
 # Safety net: the staged entrypoints must import cleanly on their own. This
 # catches closure drift (a new runtime dep that wasn't copied) at build time.
-node --input-type=module -e 'await import(process.argv[1])' "$dest/dist/server.js"
-node --input-type=module -e 'await import(process.argv[1])' "$dest/dist/tui.js"
+node --input-type=module -e 'await import("file://" + process.argv[1])' "$dest/dist/server.js"
+node --input-type=module -e 'await import("file://" + process.argv[1])' "$dest/dist/tui.js"
 
 echo "staged plugin package → $dest ($(du -sh "$dest" | cut -f1))"
 echo "  runtime deps: $(echo "$pkgs" | tr '\n' ' ')"
