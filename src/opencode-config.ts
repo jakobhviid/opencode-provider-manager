@@ -100,6 +100,24 @@ export function setDefaultModel(modelRef: string): string {
 }
 
 /**
+ * Surgically update ONLY a provider's base URL in the global config, preserving
+ * everything else. Crucially this does NOT rewrite the provider block from a
+ * runtime object, so it never freezes the discovered `models` (or a stale `api`)
+ * into the file. Returns the path written.
+ */
+export function setProviderBaseURL(providerId: string, baseURL: string): string {
+  const file = resolveConfigFilePath()
+  let text = readTextOrEmpty(file)
+  if (text.trim() === "") text = "{}\n"
+  const edits = modify(text, ["provider", providerId, "options", "baseURL"], baseURL, {
+    formattingOptions: FORMATTING,
+  })
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, applyEdits(text, edits))
+  return file
+}
+
+/**
  * Remove a stored credential from opencode's auth store. The SDK exposes no
  * generic credential delete, so we edit auth.json directly. No-op if the store
  * or key is absent (e.g. a non-file backend). Returns whether a key was removed.
@@ -112,7 +130,7 @@ export function removeCredential(providerId: string): boolean {
   } catch {
     return false
   }
-  if (!(providerId in store)) return false
+  if (!store || typeof store !== "object" || !(providerId in store)) return false
   delete store[providerId]
   fs.writeFileSync(file, JSON.stringify(store, null, 2))
   try {

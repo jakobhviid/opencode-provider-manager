@@ -62,6 +62,8 @@ interface ModelsDevProvider {
 // rebuilds it with fresh data.
 let lookupMap: Map<string, ModelsDevModel> | null = null
 let lookupPromise: Promise<Map<string, ModelsDevModel>> | null = null
+// Set by clearModelsDevCache() to force one fetch to bypass the freshness check.
+let forceRefresh = false
 
 export function normalizeModelId(id: string): string {
   let normalized = id.toLowerCase()
@@ -107,7 +109,8 @@ function writeCache(data: Record<string, ModelsDevProvider>): void {
 
 async function fetchModelsDevCatalog(): Promise<Record<string, ModelsDevProvider>> {
   const entry = readCacheEntry()
-  const isFresh = entry && (Date.now() - entry.timestamp <= CACHE_TTL)
+  const isFresh = !forceRefresh && entry && (Date.now() - entry.timestamp <= CACHE_TTL)
+  forceRefresh = false
   if (isFresh && entry) return entry.data
 
   try {
@@ -159,11 +162,9 @@ async function getLookupMap(): Promise<Map<string, ModelsDevModel>> {
 export function clearModelsDevCache(): void {
   lookupMap = null
   lookupPromise = null
-  try {
-    if (fs.existsSync(CACHE_FILE)) fs.unlinkSync(CACHE_FILE)
-  } catch {
-    // ignore
-  }
+  // Force the next fetch to bypass the freshness check, but keep the disk cache
+  // as an offline fallback (do NOT unlink it).
+  forceRefresh = true
 }
 
 // ── endpoint model response types ──

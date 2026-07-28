@@ -11,7 +11,7 @@ const DATA = fs.mkdtempSync(path.join(os.tmpdir(), "dcp-data-test-"))
 process.env.OPENCODE_CONFIG = CONFIG
 process.env.XDG_DATA_HOME = DATA
 
-const { upsertProvider, removeProvider, removeCredential } = await import(
+const { upsertProvider, removeProvider, removeCredential, setProviderBaseURL } = await import(
   "../dist/opencode-config.js"
 )
 
@@ -65,6 +65,24 @@ test("removeCredential deletes only the specified provider's credential", () => 
   // A credential that isn't in the store (e.g. supplied via {env:...} or shared)
   // is a no-op — never touches other providers' credentials.
   assert.equal(removeCredential("not-there"), false)
+})
+
+test("setProviderBaseURL updates only the base URL and never freezes a models block", () => {
+  fs.writeFileSync(
+    CONFIG,
+    `{
+  "provider": {
+    "p": { "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "https://old/v1" } }
+  }
+}
+`,
+  )
+  const file = setProviderBaseURL("p", "https://new/v1")
+  assert.equal(file, CONFIG)
+  const text = fs.readFileSync(CONFIG, "utf8")
+  assert.match(text, /new\/v1/, "new URL written")
+  assert.doesNotMatch(text, /old\/v1/, "old URL replaced")
+  assert.doesNotMatch(text, /"models"/, "must NOT introduce a hardcoded models block")
 })
 
 after(() => {

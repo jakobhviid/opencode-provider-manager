@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-07-28
+
+### Fixed
+- `/edit-provider` no longer freezes the discovered models (and a stale `api` URL) into the config — it now edits only `options.baseURL` in place.
+- `/reload-models` and the `refresh-models` tool now authenticate with a provider's key from the auth store, not just `options.apiKey`/env (fixes 401s for keys set via `/add-provider-auth`).
+- The `override-model` agent tool no longer clobbers a previously-set field when given only one of context/output; omitting both clears the override.
+- `/set-model-filter` and `/edit-provider` prefill the current value as editable text instead of ghost-text placeholder, so confirming without retyping no longer wipes it.
+- `removeCredential` guards against a malformed (non-object) auth store instead of throwing.
+- `/add-provider` overwrite preserves the existing provider's custom options (e.g. headers).
+- Model reloads keep the models.dev disk cache as an offline fallback (it's no longer deleted before the re-fetch).
+
 ## [2.6.0] - 2026-07-28
 
 ### Added

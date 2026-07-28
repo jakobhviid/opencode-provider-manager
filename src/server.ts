@@ -156,6 +156,13 @@ export const server: Plugin = async ({ client }) => {
           const result = await addProvider(args)
           if (!result.success || !result.providerEntry) return result.message
 
+          // On overwrite, keep the existing provider's custom options (headers, etc.)
+          // but not its baseURL (replaced) or in-config apiKey (would shadow the auth store).
+          if (args.overwrite && providers[args.providerId]?.options) {
+            const { apiKey: _k, baseURL: _b, ...keep } = providers[args.providerId].options as Record<string, unknown>
+            result.providerEntry.options = { ...keep, ...(result.providerEntry.options ?? {}) }
+          }
+
           await persistProviderApiKey(
             result.providerEntry,
             args.providerId,
@@ -350,8 +357,17 @@ export const server: Plugin = async ({ client }) => {
           output: tool.schema.number().optional().describe("Max output tokens"),
         },
         async execute(args) {
-          setModelOverride(args.providerId, args.modelId, { context: args.context, output: args.output })
-          return `Override set for '${args.providerId}/${args.modelId}'. Restart opencode to apply.`
+          const clearing = args.context === undefined && args.output === undefined
+          // Only pass the fields the caller specified, so a partial call (e.g. output
+          // only) doesn't clobber a previously-set context. Both omitted => clear.
+          setModelOverride(args.providerId, args.modelId, {
+            ...(args.context !== undefined ? { context: args.context } : {}),
+            ...(args.output !== undefined ? { output: args.output } : {}),
+            ...(clearing ? { context: undefined, output: undefined } : {}),
+          })
+          return clearing
+            ? `Cleared override for '${args.providerId}/${args.modelId}'. Restart opencode to apply.`
+            : `Override set for '${args.providerId}/${args.modelId}'. Restart opencode to apply.`
         },
       }),
     },

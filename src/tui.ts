@@ -15,6 +15,7 @@ import {
   removeCredential,
   listCredentialIds,
   setDefaultModel,
+  setProviderBaseURL,
   getStoredCredential,
 } from "./opencode-config.js"
 import {
@@ -29,14 +30,20 @@ import {
 
 export const id = "opencode-provider-manager"
 
-function showPrompt(api: TuiPluginApi, title: string, placeholder?: string): Promise<string | null> {
+function showPrompt(
+  api: TuiPluginApi,
+  title: string,
+  placeholder?: string,
+  value?: string,
+): Promise<string | null> {
   return new Promise((resolve) => {
     api.ui.dialog.replace(
       () =>
         api.ui.DialogPrompt({
           title,
           placeholder,
-          onConfirm: (value: string) => resolve(value),
+          value, // editable prefill (not ghost text), so confirming keeps the current value
+          onConfirm: (v: string) => resolve(v),
           onCancel: () => resolve(null),
         }),
       () => resolve(null),
@@ -260,6 +267,13 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
             return true
           },
         )
+
+        // On overwrite, keep the existing provider's custom options (headers, etc.)
+        // but not its baseURL (replaced) or in-config apiKey (would shadow the auth store).
+        if (overwrite && providers[providerId]?.options) {
+          const { apiKey: _k, baseURL: _b, ...keep } = providers[providerId].options as Record<string, unknown>
+          result.providerEntry.options = { ...keep, ...(result.providerEntry.options ?? {}) }
+        }
 
         // Persist to the global config file opencode actually loads. (Works around
         // client.config.update, which writes an unloaded <cwd>/config.json.)
@@ -553,17 +567,15 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         const current = providers[provId]
         const rawURL = await showPrompt(
           api,
-          `New base URL for '${provId}' (currently ${current.options?.baseURL ?? "unset"})`,
+          `New base URL for '${provId}'`,
           "https://api.example.com/v1",
+          current.options?.baseURL,
         )
         const baseURL = rawURL?.trim()
         if (!baseURL) return
-        const updated: ProviderConfig = {
-          ...current,
-          options: { ...(current.options ?? {}), baseURL },
-          npm: current.npm ?? "@ai-sdk/openai-compatible",
-        }
-        upsertProvider(provId, updated)
+        // Surgically update only options.baseURL — never write the discovered
+        // `models`/`api` that config.get() carries at runtime.
+        setProviderBaseURL(provId, baseURL)
         applyReload(api, `Updated '${provId}' base URL`)
       },
     },
@@ -619,14 +631,16 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           await showPrompt(
             api,
             "Only keep models matching (comma-separated regex/text; blank = all)",
-            current?.include?.join(", ") || "e.g. coder, qwen",
+            "e.g. coder, qwen",
+            current?.include?.join(", "),
           ),
         )
         const exclude = parseList(
           await showPrompt(
             api,
             "Drop models matching (comma-separated regex/text; blank = none)",
-            current?.exclude?.join(", ") || "e.g. embed, whisper",
+            "e.g. embed, whisper",
+            current?.exclude?.join(", "),
           ),
         )
         const filter = include || exclude ? { include, exclude } : undefined

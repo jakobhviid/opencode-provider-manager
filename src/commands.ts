@@ -1,6 +1,7 @@
 import { discoverAndEnrich, clearModelsDevCache, type DisplayStyle } from "./discovery.js"
 import { isValidUrl, sanitizeErrorMessage } from "./security.js"
 import { getApiKey, shouldDiscover, type ProviderConfig } from "./types.js"
+import { getStoredCredential } from "./opencode-config.js"
 
 export interface ReloadResult {
   totalModels: number
@@ -22,7 +23,7 @@ async function reloadOneProvider(
   providerConfig: ProviderConfig,
 ): Promise<ProviderReloadOutcome> {
   const baseURL = providerConfig.options!.baseURL!
-  const apiKey = getApiKey(providerConfig, providerId)
+  const apiKey = getApiKey(providerConfig, providerId) ?? getStoredCredential(providerId)
   const displayStyle: DisplayStyle = providerConfig.displayStyle ?? "slug"
 
   try {
