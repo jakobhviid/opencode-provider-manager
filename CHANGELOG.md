@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-07-28
+
+### Added
+- Homebrew distribution via the [`jakobhviid/homebrew-tap`](https://github.com/jakobhviid/homebrew-tap) tap: `brew install jakobhviid/tap/opencode-provider-manager` installs the plugin, then `opencode-provider-manager setup` wires it into opencode. `brew upgrade` keeps it current (automatic on Bazzite; enable `brew autoupdate --upgrade` on macOS) — no re-`setup` needed, since the config points at Homebrew's stable path.
+- `opencode-provider-manager` CLI (Rust): `setup` (alias `install`) and `uninstall` make a comment-preserving edit of the `plugin` array in `opencode.jsonc` and `tui.json` (backing up first, idempotent), resolving the brew-installed plugin path per machine. Also ships `completions`, `man`, and `--llm`.
+
 ## [2.6.1] - 2026-07-28
 
 ### Fixed

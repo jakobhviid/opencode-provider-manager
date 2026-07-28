@@ -1,6 +1,6 @@
 {
   "name": "opencode-provider-manager",
-  "version": "2.6.1",
+  "version": "2.7.0",
   "description": "Manage OpenAI-compatible providers in opencode: add/remove providers, manage API keys, and auto-discover models with models.dev enrichment",
   "type": "module",
   "main": "./dist/server.js",

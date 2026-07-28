@@ -34,12 +34,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Stamp plugin version
-        run: |
-          v=$(git log --reverse --format='%H%x09%s' | awk -F'\t' 'BEGIN{maj=1;min=0;pat=0}{s=$2;if(s~/^[A-Za-z]+(\([^)]*\))?!:/){maj++;min=0;pat=0}else if(s~/^feat(\([^)]*\))?:/){min++;pat=0}else{pat++}}END{print maj"."min"."pat}')
-          npm --no-git-tag-version version "$v" --allow-same-version
-          echo "stamped plugin $v"
       - name: Stage plugin package
+        # The plugin's package.json version is the source of truth — no stamping.
         run: bash ci/stage-plugin.sh staged
       - name: Tarball the staged package
         run: tar czf plugin.tar.gz -C staged plugin
@@ -70,11 +66,11 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Stamp version (so `--version` matches the release)
+      - name: Stamp CLI version from package.json
         run: |
-          # Version = Conventional-Commit semver from history (never bump by hand):
-          #   feat: -> minor | fix:/other -> patch | type!: breaking -> major (baseline 1.0.0)
-          v=$(git log --reverse --format='%H%x09%s' | awk -F'\t' 'BEGIN{maj=1;min=0;pat=0}{s=$2;if(s~/^[A-Za-z]+(\([^)]*\))?!:/){maj++;min=0;pat=0}else if(s~/^feat(\([^)]*\))?:/){min++;pat=0}else{pat++}}END{print maj"."min"."pat}')
+          # Single source of truth: the plugin's in-repo package.json version, so
+          # the release, formula, and binary all match the version shown in the repo.
+          v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -1)
           tmp=$(mktemp)
           sed -E "s/^version = \"[^\"]*\"/version = \"$v\"/" installer/Cargo.toml > "$tmp" && mv "$tmp" installer/Cargo.toml
           echo "stamped $v"
@@ -136,7 +132,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=$(git log --reverse --format='%H%x09%s' | awk -F'\t' 'BEGIN{maj=1;min=0;pat=0}{s=$2;if(s~/^[A-Za-z]+(\([^)]*\))?!:/){maj++;min=0;pat=0}else if(s~/^feat(\([^)]*\))?:/){min++;pat=0}else{pat++}}END{print maj"."min"."pat}')
+          VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -1)
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           name=opencode-provider-manager
 
