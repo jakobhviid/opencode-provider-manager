@@ -6,7 +6,7 @@ import { reloadAllProviders, addProvider, validateAddProviderParams, persistProv
 import { upsertProvider, removeProvider, removeCredential } from "./opencode-config.js"
 import { shouldDiscover, getApiKey, type ProviderConfig, type OpenCodeConfig } from "./types.js"
 
-export const id = "opencode-dynamic-custom-providers"
+export const id = "opencode-provider-manager"
 
 export type { ProviderConfig, OpenCodeConfig } from "./types.js"
 export { getApiKey } from "./types.js"

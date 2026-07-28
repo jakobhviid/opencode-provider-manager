@@ -1,5 +1,5 @@
 {
-  "name": "opencode-dynamic-custom-providers",
+  "name": "opencode-provider-manager",
   "version": "2.4.0",
   "description": "Manage OpenAI-compatible providers in opencode: add/remove providers, manage API keys, and auto-discover models with models.dev enrichment",
   "type": "module",
@@ -44,7 +44,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/jakobhviid/opencode-dynamic-custom-providers.git"
+    "url": "git+ssh://git@github.com/jakobhviid/opencode-provider-manager.git"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.14.0",

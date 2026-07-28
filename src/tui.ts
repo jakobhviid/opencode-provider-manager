@@ -10,7 +10,7 @@ import {
 } from "./commands.js"
 import { upsertProvider, removeProvider, removeCredential, listCredentialIds } from "./opencode-config.js"
 
-export const id = "opencode-dynamic-custom-providers"
+export const id = "opencode-provider-manager"
 
 function showPrompt(api: TuiPluginApi, title: string, placeholder?: string): Promise<string | null> {
   return new Promise((resolve) => {

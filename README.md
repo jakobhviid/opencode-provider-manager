@@ -1,4 +1,4 @@
-# OpenCode Dynamic Custom Providers
+# OpenCode Provider Manager
 
 A standalone [opencode](https://opencode.ai) plugin for OpenAI-compatible providers. It lets you **add and remove providers, manage their API keys, and automatically discover their models** — enriched with [models.dev](https://models.dev) metadata — from the TUI or via agent tools.
 
@@ -27,8 +27,8 @@ This fork is **not** published to npm (that package name belongs to upstream), s
 ### Local clone (recommended)
 
 ```bash
-git clone git@github.com:jakobhviid/opencode-dynamic-custom-providers.git
-cd opencode-dynamic-custom-providers
+git clone git@github.com:jakobhviid/opencode-provider-manager.git
+cd opencode-provider-manager
 npm install          # the `prepare` script builds dist/
 ```
 
@@ -42,7 +42,7 @@ opencode plugin "$(pwd)"
 
 ```jsonc
 {
-  "plugin": ["/absolute/path/to/opencode-dynamic-custom-providers"]
+  "plugin": ["/absolute/path/to/opencode-provider-manager"]
 }
 ```
 
@@ -53,7 +53,7 @@ The path is a live reference: after `npm run build`, restart opencode to pick up
 If your opencode builds plugins on install, you can point it straight at the repo:
 
 ```bash
-opencode plugin git+ssh://git@github.com/jakobhviid/opencode-dynamic-custom-providers.git
+opencode plugin git+ssh://git@github.com/jakobhviid/opencode-provider-manager.git
 ```
 
 ## Configuration
@@ -104,8 +104,8 @@ A provider is discovered when it has `options.baseURL` **and** either `dynamic: 
 ## Development
 
 ```bash
-git clone git@github.com:jakobhviid/opencode-dynamic-custom-providers.git
-cd opencode-dynamic-custom-providers
+git clone git@github.com:jakobhviid/opencode-provider-manager.git
+cd opencode-provider-manager
 npm install
 npm run build
 npm test

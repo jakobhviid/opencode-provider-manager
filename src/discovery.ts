@@ -112,7 +112,7 @@ async function fetchModelsDevCatalog(): Promise<Record<string, ModelsDevProvider
 
   try {
     const res = await fetch(MODELS_DEV_URL, {
-      headers: { "User-Agent": `opencode-dynamic-custom-providers/${PKG_VERSION}` },
+      headers: { "User-Agent": `opencode-provider-manager/${PKG_VERSION}` },
       signal: AbortSignal.timeout(10_000),
     })
     if (res.ok) {
