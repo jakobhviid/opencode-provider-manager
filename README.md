@@ -39,7 +39,7 @@ brew install jakobhviid/tap/opencode-provider-manager
 opencode-provider-manager setup      # wire the plugin into opencode's config
 ```
 
-Restart opencode and you're done. `setup` (alias `install`) is idempotent: it adds the plugin to your `opencode.jsonc` **and** `tui.json` (preserving comments), installs shell completions, and points opencode at Homebrew's stable path — so updating is just:
+Homebrew installs `opencode` first (the formula depends on it), then the plugin. Restart opencode and you're done. `setup` (alias `install`) is idempotent: it adds the plugin to your `opencode.jsonc` **and** `tui.json` (preserving comments), installs shell completions, and points opencode at Homebrew's stable path — so updating is just:
 
 ```bash
 brew upgrade opencode-provider-manager   # automatic on Bazzite; enable `brew autoupdate --upgrade` on macOS

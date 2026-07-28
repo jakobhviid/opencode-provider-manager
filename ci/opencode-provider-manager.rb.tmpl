@@ -14,6 +14,10 @@ class OpencodeProviderManager < Formula
     sha256 cellar: :any_skip_relocation, x86_64_linux: "@BOTTLE_SHA@"
   end
 
+  # The plugin loads inside opencode, and `setup` wires it into opencode's
+  # config — so opencode must be present. Homebrew installs it first.
+  depends_on "opencode"
+
   on_macos do
     on_intel do
       url "https://github.com/jakobhviid/opencode-provider-manager/releases/download/v@VERSION@/opencode-provider-manager-x86_64-apple-darwin.tar.gz"

@@ -179,6 +179,11 @@ jobs:
             echo "MAC_CODENAME=${ARM_TAG#arm64_}"
           } >> "$GITHUB_ENV"
 
+          # Drop the internal plugin-staging artifact — it's a CI hand-off between
+          # jobs (its contents already ride inside every tarball/bottle), not a
+          # release asset anyone consumes.
+          rm -f art/plugin.tar.gz
+
           gh release create "v$VERSION" art/*.tar.gz \
             --title "v$VERSION" --notes "Automated build from ${GITHUB_SHA:0:7}" \
             || gh release upload "v$VERSION" art/*.tar.gz --clobber
