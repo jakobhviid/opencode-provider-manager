@@ -108,3 +108,18 @@ export function removeCredential(providerId: string): boolean {
   }
   return true
 }
+
+/**
+ * List the provider IDs that currently have a stored credential. Reads the auth
+ * store directly (the SDK exposes no credential list). Returns [] if the store
+ * is absent or unreadable.
+ */
+export function listCredentialIds(): string[] {
+  const file = resolveAuthFilePath()
+  try {
+    const store = JSON.parse(fs.readFileSync(file, "utf8"))
+    return store && typeof store === "object" ? Object.keys(store) : []
+  } catch {
+    return []
+  }
+}

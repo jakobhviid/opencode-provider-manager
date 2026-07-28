@@ -4,7 +4,17 @@ This plugin extends OpenCode with dynamic model discovery for OpenAI-compatible 
 
 > **This is a fork** of [b3nw/opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers) with two changes:
 > 1. Providers added via `/add-provider` now persist to the **global opencode config that opencode actually loads**. Upstream wrote them via `client.config.update`, which lands in an unloaded `<cwd>/config.json`, so added providers vanished on restart.
-> 2. A new **`/delete-provider`** slash command (and `delete-provider` agent tool) removes a provider and deletes its stored credential.
+> 2. New provider-management commands (TUI slash commands + agent tools): **`/remove-provider`**, **`/add-provider-auth`**, and **`/remove-provider-auth`**.
+
+## Commands
+
+| Command (TUI) | Agent tool | What it does |
+| --- | --- | --- |
+| `/add-provider` | `add-provider` | Add a new OpenAI-compatible provider (validates the endpoint, discovers models) |
+| `/remove-provider` | `remove-provider` | Remove a provider and delete its stored credential |
+| `/add-provider-auth` | `add-provider-auth` | Set (or replace) the API key for an existing provider |
+| `/remove-provider-auth` | `remove-provider-auth` | Delete a provider's stored key (keeps the provider) |
+| `/reload-models` (`/refresh-models`) | `refresh-models` | Re-discover models for all dynamic providers without restarting |
 
 ## Features
 
@@ -88,7 +98,13 @@ For explicit opt-in, set `"dynamic": true`:
 ```
 
 ### Removing a Provider
-Run `/delete-provider` in the TUI (or ask the agent to use the `delete-provider` tool). It removes the provider block from your global `opencode.jsonc` (comments preserved) and deletes that provider's stored credential from the auth store. A credential supplied via `{env:...}` or otherwise shared is left untouched.
+Run `/remove-provider` in the TUI (or ask the agent to use the `remove-provider` tool). It removes the provider block from your global `opencode.jsonc` (comments preserved) and deletes that provider's stored credential from the auth store. A credential supplied via `{env:...}` or otherwise shared is left untouched.
+
+### Managing a Provider's API Key
+- **`/add-provider-auth`** — pick an existing provider and set (or replace) its API key. Useful for a provider defined in config, or one discovered from a keyless endpoint that later requires auth.
+- **`/remove-provider-auth`** — pick a provider that has a stored key and delete just the key; the provider itself stays.
+
+Both are also available as the `add-provider-auth` / `remove-provider-auth` agent tools.
 
 ### API Key Authentication
 

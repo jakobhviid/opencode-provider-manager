@@ -8,7 +8,7 @@ import {
   validateProviderId,
   persistProviderApiKey,
 } from "./commands.js"
-import { upsertProvider, removeProvider, removeCredential } from "./opencode-config.js"
+import { upsertProvider, removeProvider, removeCredential, listCredentialIds } from "./opencode-config.js"
 
 export const id = "opencode-dynamic-custom-providers"
 
@@ -120,7 +120,11 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         name: "add-provider",
       },
       onSelect: async () => {
-        const rawProviderId = await showPrompt(api, "Provider ID", "e.g., my-proxy (alphanumeric only)")
+        const rawProviderId = await showPrompt(
+          api,
+          "Short name for this provider (you'll pick it by this name in the model list later)",
+          "e.g. my-proxy — letters, numbers, hyphens, underscores",
+        )
         if (!rawProviderId) return
 
         const providerId = rawProviderId.trim()
@@ -137,32 +141,44 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         if (providers[providerId]) {
           overwrite = await showConfirm(
             api,
-            "Provider already exists",
-            `A provider with ID '${providerId}' already exists. Overwrite it?`,
+            "That name is already taken",
+            `A provider called '${providerId}' already exists. Replace it?`,
           )
           if (!overwrite) return
         }
 
-        const rawBaseURL = await showPrompt(api, "Base URL", "https://api.example.com/v1")
+        const rawBaseURL = await showPrompt(
+          api,
+          "API address (the OpenAI-compatible endpoint, usually ending in /v1)",
+          "https://api.example.com/v1",
+        )
         if (!rawBaseURL) return
 
         const baseURL = rawBaseURL.trim()
 
-        const rawApiKey = await showPrompt(api, "API Key (Optional)", "sk-...")
+        const rawApiKey = await showPrompt(
+          api,
+          "API key (leave blank if this endpoint doesn't need one)",
+          "sk-… — optional",
+        )
         const apiKey = rawApiKey?.trim() || undefined
 
-        const displayStyle = await showSelect<DisplayStyle>(api, "Model Display Names", [
-          {
-            title: "Full Slug",
-            value: "slug",
-            description: "vertex/gemini-3.1-pro (best for proxies)",
-          },
-          {
-            title: "Friendly Name",
-            value: "name",
-            description: "Gemini 3.1 Pro (may be ambiguous)",
-          },
-        ])
+        const displayStyle = await showSelect<DisplayStyle>(
+          api,
+          "How should model names appear in the model list?",
+          [
+            {
+              title: "Exact model IDs (recommended for proxies)",
+              value: "slug",
+              description: "Shows the raw id, e.g. vertex/gemini-3.1-pro",
+            },
+            {
+              title: "Friendly names",
+              value: "name",
+              description: "Cleaned-up labels, e.g. Gemini 3.1 Pro (can be ambiguous)",
+            },
+          ],
+        )
         if (!displayStyle) return
 
         const params = { providerId, baseURL, apiKey, displayStyle, overwrite }
@@ -202,11 +218,11 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
       },
     },
     {
-      title: "Delete Provider",
-      value: "delete-provider",
+      title: "Remove Provider",
+      value: "remove-provider",
       description: "Remove a custom provider and delete its stored credential",
       slash: {
-        name: "delete-provider",
+        name: "remove-provider",
       },
       onSelect: async () => {
         const { data: config } = await api.client.config.get()
@@ -220,7 +236,7 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
 
         const providerId = await showSelect<string>(
           api,
-          "Delete which provider?",
+          "Which provider do you want to remove?",
           ids.map((id) => ({
             title: id,
             value: id,
@@ -231,8 +247,8 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
 
         const confirmed = await showConfirm(
           api,
-          "Delete provider",
-          `Remove '${providerId}' from your opencode config and delete its stored credential? This cannot be undone.`,
+          "Remove this provider?",
+          `This deletes '${providerId}' from your opencode config and removes its saved API key. This can't be undone.`,
         )
         if (!confirmed) return
 
@@ -250,6 +266,95 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         api.ui.toast({
           message: `Removed '${providerId}'${credentialRemoved ? " and its credential" : ""} from ${file}. Restart opencode to apply.`,
           variant: "success",
+        })
+      },
+    },
+    {
+      title: "Set Provider API Key",
+      value: "add-provider-auth",
+      description: "Set the API key for an existing provider",
+      slash: {
+        name: "add-provider-auth",
+      },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+
+        if (ids.length === 0) {
+          api.ui.toast({
+            message: "No providers configured. Add one with /add-provider first.",
+            variant: "warning",
+          })
+          return
+        }
+
+        const providerId = await showSelect<string>(
+          api,
+          "Which provider do you want to set an API key for?",
+          ids.map((id) => ({
+            title: id,
+            value: id,
+            description: providers[id]?.options?.baseURL,
+          })),
+        )
+        if (!providerId) return
+
+        const rawKey = await showPrompt(api, `Paste the API key for '${providerId}'`, "sk-…")
+        const apiKey = rawKey?.trim()
+        if (!apiKey) {
+          api.ui.toast({ message: "No key entered.", variant: "warning" })
+          return
+        }
+
+        try {
+          await api.client.auth.set({ providerID: providerId, auth: { type: "api", key: apiKey } })
+        } catch {
+          api.ui.toast({ message: `Failed to store the API key for '${providerId}'.`, variant: "error" })
+          return
+        }
+
+        api.ui.toast({
+          message: `Stored API key for '${providerId}'. Run /reload-models or restart to use it.`,
+          variant: "success",
+        })
+      },
+    },
+    {
+      title: "Remove Provider API Key",
+      value: "remove-provider-auth",
+      description: "Delete the stored API key for a provider (keeps the provider)",
+      slash: {
+        name: "remove-provider-auth",
+      },
+      onSelect: async () => {
+        const credentialed = listCredentialIds()
+
+        if (credentialed.length === 0) {
+          api.ui.toast({ message: "No providers have a saved API key.", variant: "warning" })
+          return
+        }
+
+        const providerId = await showSelect<string>(
+          api,
+          "Remove the saved API key for which provider?",
+          credentialed.map((id) => ({ title: id, value: id })),
+        )
+        if (!providerId) return
+
+        const confirmed = await showConfirm(
+          api,
+          "Remove this API key?",
+          `Delete the saved API key for '${providerId}'? The provider stays — only the key is removed.`,
+        )
+        if (!confirmed) return
+
+        const removed = removeCredential(providerId)
+        api.ui.toast({
+          message: removed
+            ? `Removed the stored key for '${providerId}'. Restart opencode to apply.`
+            : `No stored key found for '${providerId}'.`,
+          variant: removed ? "success" : "warning",
         })
       },
     },

@@ -170,7 +170,7 @@ export const server: Plugin = async ({ client }) => {
         },
       }),
 
-      "delete-provider": tool({
+      "remove-provider": tool({
         description:
           "Remove a custom provider from the opencode config and delete its stored credential.",
         args: {
@@ -190,6 +190,37 @@ export const server: Plugin = async ({ client }) => {
             (credentialRemoved ? " and its stored credential" : "") +
             ` from ${file}. Restart opencode to apply.`
           )
+        },
+      }),
+
+      "add-provider-auth": tool({
+        description:
+          "Set (or replace) the API key for an existing provider. Stores the key in opencode's auth store.",
+        args: {
+          providerId: tool.schema.string().describe("ID of an existing provider"),
+          apiKey: tool.schema.string().describe("API key to store for the provider"),
+        },
+        async execute(args) {
+          try {
+            await client.auth.set({ path: { id: args.providerId }, body: { type: "api", key: args.apiKey } })
+          } catch (error) {
+            return `Failed to store the API key for '${args.providerId}': ${sanitizeErrorMessage(error)}`
+          }
+          return `Stored API key for '${args.providerId}'. Run refresh-models or restart to use it.`
+        },
+      }),
+
+      "remove-provider-auth": tool({
+        description:
+          "Delete the stored API key for a provider without removing the provider itself.",
+        args: {
+          providerId: tool.schema.string().describe("ID of the provider whose stored key should be removed"),
+        },
+        async execute(args) {
+          const removed = removeCredential(args.providerId)
+          return removed
+            ? `Removed the stored API key for '${args.providerId}'. Restart opencode to apply.`
+            : `No stored API key found for '${args.providerId}'.`
         },
       }),
     },
