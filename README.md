@@ -1,10 +1,8 @@
 # OpenCode Dynamic Custom Providers
 
-This plugin extends OpenCode with dynamic model discovery for OpenAI-compatible providers, enriched with metadata from [models.dev](https://models.dev).
+A standalone [opencode](https://opencode.ai) plugin for OpenAI-compatible providers. It lets you **add and remove providers, manage their API keys, and automatically discover their models** — enriched with [models.dev](https://models.dev) metadata — from the TUI or via agent tools.
 
-> **This is a fork** of [b3nw/opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers) with two changes:
-> 1. Providers added via `/add-provider` now persist to the **global opencode config that opencode actually loads**. Upstream wrote them via `client.config.update`, which lands in an unloaded `<cwd>/config.json`, so added providers vanished on restart.
-> 2. New provider-management commands (TUI slash commands + agent tools): **`/remove-provider`**, **`/add-provider-auth`**, and **`/remove-provider-auth`**.
+> **Fork notice.** This is a fork of [b3nw/opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers) (full credit in [Credits](#credits)). It fixes provider persistence so providers added through the UI survive a restart, and adds provider- and key-management commands. **Install it from this repository — not the upstream npm package,** which does not include these changes.
 
 ## Commands
 
@@ -16,154 +14,109 @@ This plugin extends OpenCode with dynamic model discovery for OpenAI-compatible 
 | `/remove-provider-auth` | `remove-provider-auth` | Delete a provider's stored key (keeps the provider) |
 | `/reload-models` (`/refresh-models`) | `refresh-models` | Re-discover models for all dynamic providers without restarting |
 
-## Features
+## How model discovery works
 
-### 1. Automatic Model Discovery at Startup
-The server plugin's `config` hook discovers models from any provider with a `baseURL` on every OpenCode startup. Models are always up-to-date without manual intervention.
-
-### 2. models.dev Metadata Enrichment
-Discovered models are cross-referenced against the [models.dev](https://models.dev) catalog (the same source OpenCode uses natively) to enrich them with accurate context windows, output limits, costs, capabilities (tool calling, reasoning, temperature), and input/output modalities.
-
-### 3. `/add-provider` Slash Command (TUI)
-An interactive TUI wizard for adding new providers:
-- Prompts for Provider ID, Base URL, and API Key
-- Validates inputs and checks for duplicates
-- Discovers models to confirm the endpoint works before saving
-- Writes `dynamic: true` so models are re-discovered on each startup
-
-### 4. `/reload-models` Slash Command (TUI)
-A TUI slash command (also available as `/refresh-models`) that re-discovers models from all providers with a `baseURL` without restarting OpenCode. Clears the models.dev cache and updates the live config in one step.
-
-### 5. `add-provider` Agent Tool (Web / Desktop / TUI)
-A server-side tool the AI agent can call to add a new provider programmatically. Works in all interfaces (web, desktop, and TUI). Accepts provider ID, base URL, API key, and display style as arguments, validates the endpoint, discovers models, and persists the provider config.
-
-### 6. `refresh-models` Agent Tool (Web / Desktop / TUI)
-A server-side tool the AI agent can call to re-discover models from all dynamic providers and update the live config. Clears the models.dev metadata cache, fetches `/models` from every provider with a baseURL, enriches them, and persists the updated config. Works in all interfaces without restarting.
+- On startup, the plugin's `config` hook fetches `/v1/models` from every provider that has a `baseURL` and no explicit `models` list (or has `dynamic: true`).
+- Each discovered model is cross-referenced against the [models.dev](https://models.dev) catalog for context windows, output limits, costs, and capabilities (tool calling, reasoning, modalities).
+- Models are injected into the live config before opencode loads providers, so your model list stays current without hand-maintaining it.
 
 ## Installation
 
+This fork is **not** published to npm (that package name belongs to upstream), so install it from source.
+
+### Local clone (recommended)
+
 ```bash
-opencode plugin opencode-dynamic-custom-providers
+git clone git@github.com:jakobhviid/opencode-dynamic-custom-providers.git
+cd opencode-dynamic-custom-providers
+npm install          # the `prepare` script builds dist/
 ```
 
-### Alternative: Install from GitHub
+Then point opencode at the built plugin — either run:
+
 ```bash
-opencode plugin git+ssh://git@github.com/b3nw/opencode-dynamic-custom-providers.git
+opencode plugin "$(pwd)"
 ```
 
-### Alternative: Local Clone (for Development)
+…or add the absolute path to the `plugin` array in **both** `~/.config/opencode/opencode.jsonc` (server) and `~/.config/opencode/tui.json` (TUI):
+
+```jsonc
+{
+  "plugin": ["/absolute/path/to/opencode-dynamic-custom-providers"]
+}
+```
+
+The path is a live reference: after `npm run build`, restart opencode to pick up changes.
+
+### From Git
+
+If your opencode builds plugins on install, you can point it straight at the repo:
+
 ```bash
-git clone https://github.com/b3nw/opencode-dynamic-custom-providers
-opencode plugin ./opencode-dynamic-custom-providers
+opencode plugin git+ssh://git@github.com/jakobhviid/opencode-dynamic-custom-providers.git
 ```
 
 ## Configuration
 
-### Adding a Provider via TUI
-Run `/add-provider` in the OpenCode TUI and follow the interactive prompts. The provider will be added with `dynamic: true` so models are discovered automatically on each startup.
+### Add a provider — TUI
+Run `/add-provider` and follow the prompts (name, base URL, optional API key, display style). The provider is written to your global `opencode.jsonc` and its models are discovered automatically.
 
-### Adding a Provider via the Agent (Web / Desktop)
-Ask the AI agent to add a provider. The agent will use the `add-provider` tool with the parameters you provide. For example: *"Add an OpenAI-compatible provider called my-proxy at https://api.proxy.com/v1 with API key sk-..."*
+### Add a provider — agent
+Ask the agent, e.g. *"Add an OpenAI-compatible provider called my-proxy at https://api.proxy.com/v1 with API key sk-…"* — it calls the `add-provider` tool.
 
-### Adding a Provider Manually
-Add a provider to `opencode.json` with a `baseURL`. Models will be discovered automatically:
-
-```json
-{
-  "provider": {
-    "my-proxy": {
-      "name": "My Proxy",
-      "options": {
-        "baseURL": "https://api.proxy.com/v1"
-      }
-    }
-  }
-}
-```
-
-For explicit opt-in, set `"dynamic": true`:
+### Add a provider — manually
+Add a block with a `baseURL` to `opencode.jsonc`; models are discovered automatically:
 
 ```json
 {
   "provider": {
     "my-proxy": {
       "name": "My Proxy",
-      "dynamic": true,
-      "options": {
-        "baseURL": "https://api.proxy.com/v1"
-      }
+      "options": { "baseURL": "https://api.proxy.com/v1" }
     }
   }
 }
 ```
 
-### Removing a Provider
-Run `/remove-provider` in the TUI (or ask the agent to use the `remove-provider` tool). It removes the provider block from your global `opencode.jsonc` (comments preserved) and deletes that provider's stored credential from the auth store. A credential supplied via `{env:...}` or otherwise shared is left untouched.
+Set `"dynamic": true` to force re-discovery even when a `models` list is present.
 
-### Managing a Provider's API Key
-- **`/add-provider-auth`** — pick an existing provider and set (or replace) its API key. Useful for a provider defined in config, or one discovered from a keyless endpoint that later requires auth.
-- **`/remove-provider-auth`** — pick a provider that has a stored key and delete just the key; the provider itself stays.
+### Manage a provider's API key
+- `/add-provider-auth` — pick an existing provider and set (or replace) its key. Useful when a provider was defined in config, or discovered from a keyless endpoint that later needs auth.
+- `/remove-provider-auth` — pick a provider that has a stored key and delete just the key; the provider stays.
 
-Both are also available as the `add-provider-auth` / `remove-provider-auth` agent tools.
+### Remove a provider
+`/remove-provider` deletes the provider from `opencode.jsonc` (comments preserved) and removes its stored credential. Credentials supplied via `{env:…}` or otherwise shared are left untouched.
 
-### API Key Authentication
+### Where API keys come from
+1. The `/add-provider` / `/add-provider-auth` commands (stored in opencode's auth store)
+2. `options.apiKey` in config
+3. The environment variable `OPENCODE_LOCAL_<PROVIDER_ID>_API_KEY`
 
-API keys can be set in three ways:
+## Discovery eligibility
 
-1. **Via the `/add-provider` TUI command** (stored securely via OpenCode's auth system)
-2. **In config** under `options.apiKey`:
-   ```json
-   {
-     "provider": {
-       "my-proxy": {
-         "options": {
-           "baseURL": "https://api.proxy.com/v1",
-           "apiKey": "sk-..."
-         }
-       }
-     }
-   }
-   ```
-3. **Via environment variable** using the pattern `OPENCODE_LOCAL_<PROVIDER_ID>_API_KEY`:
-   ```bash
-   export OPENCODE_LOCAL_MY_PROXY_API_KEY=sk-...
-   ```
-
-## How It Works
-
-1. On startup, the server plugin's `config` hook iterates all providers with a `baseURL`
-2. For each eligible provider (no models defined, or `dynamic: true`), it fetches `/v1/models`
-3. Each discovered model ID is cross-referenced against the models.dev catalog
-4. Matching models get enriched metadata (context window, costs, capabilities, modalities)
-5. Enriched models are injected into the live config before OpenCode loads providers
-6. The provider is set to use `@ai-sdk/openai-compatible` as the SDK package
-
-## Discovery Trigger
-
-A provider is eligible for discovery when it has `options.baseURL` and either:
-- Has `dynamic: true` set in config, **or**
-- Has no `models` key (or empty models) in config
-
-Providers that already have models defined in config are left unchanged unless `dynamic: true` is set.
+A provider is discovered when it has `options.baseURL` **and** either `dynamic: true` or no (empty) `models` list. Providers with an explicit `models` list are left alone unless `dynamic: true` is set.
 
 ## Limitations
-- **Startup latency**: Each dynamic provider adds a network request at startup (15s timeout per endpoint, plus models.dev fetch on first run)
-- **models.dev coverage**: Models not in the models.dev catalog get sensible defaults (128k context window, 4096 output limit, text-only modalities)
-- **Capabilities detection**: Endpoint-reported capabilities (`supported_parameters`, `capabilities`) are merged with models.dev data; neither source alone is complete for all proxies
+- **Startup latency**: each dynamic provider adds a `/v1/models` request at startup (15s timeout), plus a models.dev fetch on first run.
+- **models.dev coverage**: models not in the catalog get sensible defaults (128k context, 4096 output, text-only).
+- **Capabilities**: endpoint-reported capabilities are merged with models.dev data; neither is complete for every proxy.
 
 ## Development
 
 ```bash
-git clone https://github.com/b3nw/opencode-dynamic-custom-providers
+git clone git@github.com:jakobhviid/opencode-dynamic-custom-providers.git
 cd opencode-dynamic-custom-providers
 npm install
 npm run build
+npm test
 ```
 
-## AI disclosure
+See [AGENTS.md](AGENTS.md) for repository conventions.
 
-Parts of this codebase were written with the assistance of AI coding agents (Claude Code, opencode, and others). All changes were reviewed by the maintainer.
+## Credits
+
+Originally created by [b3nw](https://github.com/b3nw) as [opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers). This fork, maintained by Jakob Hviid, adds provider persistence to the global config, provider/key-management commands, and clearer prompts. The original MIT copyright is retained in [LICENSE](LICENSE).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Originally created by [b3nw](https://github.com/b3nw); fork modifications by Jakob Hviid.
+MIT — see [LICENSE](LICENSE). Copyright © b3nw (original) and Jakob Hviid (fork).

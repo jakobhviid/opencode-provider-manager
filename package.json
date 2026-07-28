@@ -1,7 +1,7 @@
 {
   "name": "opencode-dynamic-custom-providers",
   "version": "2.4.0",
-  "description": "Dynamic model discovery for OpenAI-compatible providers in OpenCode with models.dev enrichment",
+  "description": "Manage OpenAI-compatible providers in opencode: add/remove providers, manage API keys, and auto-discover models with models.dev enrichment",
   "type": "module",
   "main": "./dist/server.js",
   "types": "./dist/server.d.ts",
