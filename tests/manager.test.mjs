@@ -40,6 +40,14 @@ test("settings: removeProviderSettings clears everything", () => {
   assert.deepEqual(settings.getProviderSettings("p2"), {})
 })
 
+test("settings: auto-reload defaults on and toggles", () => {
+  assert.equal(settings.getAutoReload(), true) // default on
+  settings.setAutoReload(false)
+  assert.equal(settings.getAutoReload(), false)
+  settings.setAutoReload(true)
+  assert.equal(settings.getAutoReload(), true)
+})
+
 test("modelPassesFilter: include, exclude, regex and bad-regex fallback", () => {
   assert.equal(modelPassesFilter("qwen3-coder", undefined), true)
   assert.equal(modelPassesFilter("qwen3-coder", { include: ["coder"] }), true)

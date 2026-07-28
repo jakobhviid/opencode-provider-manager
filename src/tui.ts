@@ -17,7 +17,15 @@ import {
   setDefaultModel,
   getStoredCredential,
 } from "./opencode-config.js"
-import { getProviderSettings, setDisabled, setFilter, setModelOverride, removeProviderSettings } from "./settings.js"
+import {
+  getProviderSettings,
+  setDisabled,
+  setFilter,
+  setModelOverride,
+  removeProviderSettings,
+  getAutoReload,
+  setAutoReload,
+} from "./settings.js"
 
 export const id = "opencode-provider-manager"
 
@@ -84,6 +92,35 @@ function keyFor(providerId: string, provider: ProviderConfig): string | undefine
   return getApiKey(provider, providerId) ?? getStoredCredential(providerId)
 }
 
+/**
+ * Trigger opencode's built-in reload (SIGUSR2 -> invalidate config + dispose/rebuild
+ * instances -> re-run discovery), but ONLY when a SIGUSR2 handler is registered.
+ * Without a handler, SIGUSR2 would terminate opencode, so we never fire in that case.
+ * TUI commands run in the same process as the handler, so this is safe there.
+ * Returns whether a reload was actually triggered.
+ */
+function triggerReload(): boolean {
+  try {
+    if (process.listenerCount("SIGUSR2") === 0) return false
+    process.kill(process.pid, "SIGUSR2")
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Report a successful change and auto-reload opencode to apply it (when enabled + safe). */
+function applyReload(api: TuiPluginApi, what: string): void {
+  if (getAutoReload() && triggerReload()) {
+    api.ui.toast({ message: `${what} — reloaded.`, variant: "success" })
+  } else {
+    api.ui.toast({
+      message: `${what}. Restart opencode to apply${getAutoReload() ? "" : " (auto-reload is off)"}.`,
+      variant: "success",
+    })
+  }
+}
+
 export const tui: TuiPlugin = async (api: TuiPluginApi) => {
   api.command.register(() => [
     {
@@ -117,13 +154,10 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           api.ui.toast({ message: e, variant: "error" })
         }
 
-        // No config write — discovery re-runs on every launch, so refreshed models
-        // apply on restart. (client.config.update writes an unloaded <cwd>/config.json.)
+        // No config write — discovery re-runs on reload/launch. (client.config.update
+        // writes an unloaded <cwd>/config.json.)
         if (result.failures === 0) {
-          api.ui.toast({
-            message: `Re-discovered ${result.totalModels} model(s) from ${result.providerCount} provider(s). Restart opencode to apply.`,
-            variant: "success",
-          })
+          applyReload(api, `Re-discovered ${result.totalModels} model(s) from ${result.providerCount} provider(s)`)
         } else if (result.totalModels > 0) {
           api.ui.toast({
             message: `Re-discovered ${result.totalModels} model(s) with ${result.failures} failure(s). Restart opencode to apply.`,
@@ -229,12 +263,8 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
 
         // Persist to the global config file opencode actually loads. (Works around
         // client.config.update, which writes an unloaded <cwd>/config.json.)
-        const configFile = upsertProvider(providerId, result.providerEntry)
-
-        api.ui.toast({
-          message: `Added '${providerId}' (${result.modelCount} models discovered) to ${configFile}. Restart opencode to use it.`,
-          variant: "success",
-        })
+        upsertProvider(providerId, result.providerEntry)
+        applyReload(api, `Added '${providerId}' (${result.modelCount} models)`)
       },
     },
     {
@@ -284,10 +314,7 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           return
         }
 
-        api.ui.toast({
-          message: `Removed '${providerId}'${credentialRemoved ? " and its credential" : ""} from ${file}. Restart opencode to apply.`,
-          variant: "success",
-        })
+        applyReload(api, `Removed '${providerId}'${credentialRemoved ? " and its credential" : ""}`)
       },
     },
     {
@@ -335,10 +362,7 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           return
         }
 
-        api.ui.toast({
-          message: `Stored API key for '${providerId}'. Run /reload-models or restart to use it.`,
-          variant: "success",
-        })
+        applyReload(api, `Stored API key for '${providerId}'`)
       },
     },
     {
@@ -371,12 +395,8 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         if (!confirmed) return
 
         const removed = removeCredential(providerId)
-        api.ui.toast({
-          message: removed
-            ? `Removed the stored key for '${providerId}'. Restart opencode to apply.`
-            : `No stored key found for '${providerId}'.`,
-          variant: removed ? "success" : "warning",
-        })
+        if (removed) applyReload(api, `Removed the stored key for '${providerId}'`)
+        else api.ui.toast({ message: `No stored key found for '${providerId}'.`, variant: "warning" })
       },
     },
     {
@@ -507,11 +527,8 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         )
         if (!modelId) return
         const ref = `${provId}/${modelId}`
-        const file = setDefaultModel(ref)
-        api.ui.toast({
-          message: `Default model set to '${ref}' in ${file}. Restart opencode to apply.`,
-          variant: "success",
-        })
+        setDefaultModel(ref)
+        applyReload(api, `Default model set to '${ref}'`)
       },
     },
     {
@@ -546,11 +563,8 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           options: { ...(current.options ?? {}), baseURL },
           npm: current.npm ?? "@ai-sdk/openai-compatible",
         }
-        const file = upsertProvider(provId, updated)
-        api.ui.toast({
-          message: `Updated '${provId}' base URL in ${file}. Restart opencode to apply.`,
-          variant: "success",
-        })
+        upsertProvider(provId, updated)
+        applyReload(api, `Updated '${provId}' base URL`)
       },
     },
     {
@@ -578,10 +592,7 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         if (!provId) return
         const nowDisabled = !getProviderSettings(provId).disabled
         setDisabled(provId, nowDisabled)
-        api.ui.toast({
-          message: `'${provId}' ${nowDisabled ? "disabled" : "enabled"}. Restart opencode to apply.`,
-          variant: "success",
-        })
+        applyReload(api, `'${provId}' ${nowDisabled ? "disabled" : "enabled"}`)
       },
     },
     {
@@ -620,12 +631,7 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
         )
         const filter = include || exclude ? { include, exclude } : undefined
         setFilter(provId, filter)
-        api.ui.toast({
-          message: filter
-            ? `Filter saved for '${provId}'. Restart opencode to apply.`
-            : `Filter cleared for '${provId}'. Restart opencode to apply.`,
-          variant: "success",
-        })
+        applyReload(api, filter ? `Filter saved for '${provId}'` : `Filter cleared for '${provId}'`)
       },
     },
     {
@@ -699,11 +705,27 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           context = picked
         }
         setModelOverride(provId, modelId, { context })
+        applyReload(
+          api,
+          context
+            ? `Set ${provId}/${modelId} context to ${context.toLocaleString()}`
+            : `Cleared context override for ${provId}/${modelId}`,
+        )
+      },
+    },
+    {
+      title: "Toggle Auto-Reload",
+      value: "toggle-auto-reload",
+      description: "Turn automatic opencode reload after changes on or off",
+      slash: { name: "toggle-auto-reload" },
+      onSelect: async () => {
+        const next = !getAutoReload()
+        setAutoReload(next)
         api.ui.toast({
-          message: context
-            ? `Set ${provId}/${modelId} context to ${context.toLocaleString()}. Restart opencode to apply.`
-            : `Cleared context override for ${provId}/${modelId}. Restart opencode to apply.`,
-          variant: "success",
+          message: next
+            ? "Auto-reload ON — changes apply immediately (opencode reloads itself)."
+            : "Auto-reload OFF — changes apply on the next restart.",
+          variant: "info",
         })
       },
     },

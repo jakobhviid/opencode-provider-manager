@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-07-28
+
+### Added
+- Auto-reload: after a change (add/remove/edit provider, API keys, filters, overrides, default model, reload-models), the plugin reloads opencode in place via its built-in `SIGUSR2` handler, so changes apply immediately — no restart. Guarded to only fire when a handler is registered (it can never terminate opencode); otherwise it falls back to "restart to apply".
+- `/toggle-auto-reload` (TUI) to turn auto-reload off/on. Persisted in the settings file.
+
+### Changed
+- Command toasts now say whether a change was applied live or needs a restart.
+
 ## [2.5.0] - 2026-07-28
 
 ### Added

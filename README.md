@@ -19,7 +19,8 @@ A standalone [opencode](https://opencode.ai) plugin for OpenAI-compatible provid
 | `/set-default-model` | `set-default-model` | Choose opencode's default model (writes the `model` field) |
 | `/set-model-filter` | `set-model-filter` | Include/exclude patterns for which models a provider discovers |
 | `/override-model` | `override-model` | Override a model's context window / output when models.dev doesn't know it |
-| `/reload-models` (`/refresh-models`) | `refresh-models` | Re-discover all providers' models; restart to apply |
+| `/reload-models` (`/refresh-models`) | `refresh-models` | Re-discover all providers' models |
+| `/toggle-auto-reload` | — | Turn automatic reload-after-changes on/off (default: on) |
 
 ## How model discovery works
 
@@ -107,7 +108,15 @@ Per-provider settings that don't belong in your opencode config (opencode strips
 - **`/override-model`** — set a model's context window (and max output) when models.dev doesn't know it. The picker offers any value the endpoint reports, the models.dev value, common presets, or a custom number.
 - **`/toggle-provider`** — disable a provider's discovery without removing it.
 
-Changes apply on the next opencode restart.
+By default these apply immediately — see [Applying changes](#applying-changes).
+
+## Applying changes
+
+By default, a change made through any of these commands **applies immediately**: the plugin asks opencode to reload itself in place — re-reading config, re-running discovery, rebuilding providers — via opencode's built-in `SIGUSR2` reload. No restart needed, and your session is preserved.
+
+It's guarded: the reload only fires when opencode's reload handler is actually registered (i.e. the TUI is running), so it can **never terminate opencode**. When it can't reload safely, the command says "restart to apply" instead.
+
+Turn it off with **`/toggle-auto-reload`** (stored in `~/.config/opencode-provider-manager/settings.json`); changes then apply on the next restart. You can also reload manually any time with `kill -USR2 $(pgrep -x opencode)`.
 
 ## Discovery eligibility
 
