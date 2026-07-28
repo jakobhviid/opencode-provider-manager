@@ -1,6 +1,7 @@
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
-import type { DisplayStyle } from "./discovery.js"
-import type { ProviderConfig } from "./types.js"
+import { discoverAndEnrich, fetchEndpointModels, detectContextWindow, type DisplayStyle } from "./discovery.js"
+import { getApiKey, type ProviderConfig } from "./types.js"
+import { sanitizeErrorMessage } from "./security.js"
 import {
   reloadAllProviders,
   addProvider,
@@ -8,7 +9,15 @@ import {
   validateProviderId,
   persistProviderApiKey,
 } from "./commands.js"
-import { upsertProvider, removeProvider, removeCredential, listCredentialIds } from "./opencode-config.js"
+import {
+  upsertProvider,
+  removeProvider,
+  removeCredential,
+  listCredentialIds,
+  setDefaultModel,
+  getStoredCredential,
+} from "./opencode-config.js"
+import { getProviderSettings, setDisabled, setFilter, setModelOverride, removeProviderSettings } from "./settings.js"
 
 export const id = "opencode-provider-manager"
 
@@ -62,6 +71,19 @@ function showSelect<V>(
   })
 }
 
+function parseList(input: string | null): string[] | undefined {
+  const arr = (input ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return arr.length ? arr : undefined
+}
+
+/** Resolve a provider's API key from config/env or the auth store (for discovery/testing). */
+function keyFor(providerId: string, provider: ProviderConfig): string | undefined {
+  return getApiKey(provider, providerId) ?? getStoredCredential(providerId)
+}
+
 export const tui: TuiPlugin = async (api: TuiPluginApi) => {
   api.command.register(() => [
     {
@@ -95,18 +117,16 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
           api.ui.toast({ message: e, variant: "error" })
         }
 
-        if (result.totalModels > 0) {
-          await api.client.config.update({ config: { provider: providers } as never })
-        }
-
+        // No config write — discovery re-runs on every launch, so refreshed models
+        // apply on restart. (client.config.update writes an unloaded <cwd>/config.json.)
         if (result.failures === 0) {
           api.ui.toast({
-            message: `Reloaded ${result.totalModels} model(s) from ${result.providerCount} provider(s).`,
+            message: `Re-discovered ${result.totalModels} model(s) from ${result.providerCount} provider(s). Restart opencode to apply.`,
             variant: "success",
           })
         } else if (result.totalModels > 0) {
           api.ui.toast({
-            message: `Reloaded ${result.totalModels} model(s) with ${result.failures} failure(s). Check provider URLs/keys.`,
+            message: `Re-discovered ${result.totalModels} model(s) with ${result.failures} failure(s). Restart opencode to apply.`,
             variant: "warning",
           })
         }
@@ -254,6 +274,7 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
 
         const { file, existed } = removeProvider(providerId)
         const credentialRemoved = removeCredential(providerId)
+        removeProviderSettings(providerId)
 
         if (!existed) {
           api.ui.toast({
@@ -355,6 +376,334 @@ export const tui: TuiPlugin = async (api: TuiPluginApi) => {
             ? `Removed the stored key for '${providerId}'. Restart opencode to apply.`
             : `No stored key found for '${providerId}'.`,
           variant: removed ? "success" : "warning",
+        })
+      },
+    },
+    {
+      title: "List Providers",
+      value: "providers",
+      description: "Show configured providers, their key source, and any filters/overrides",
+      slash: { name: "providers" },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+        const credentialed = new Set(listCredentialIds())
+        const keySource = (pid: string): string => {
+          const p = providers[pid]
+          const envKey = `OPENCODE_LOCAL_${pid.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`
+          if (p.options?.apiKey) return "config"
+          if (credentialed.has(pid)) return "auth store"
+          if (process.env[envKey]) return "env"
+          return "none"
+        }
+        const chosen = await showSelect<string>(
+          api,
+          "Providers (pick one to see details)",
+          ids.map((pid) => {
+            const s = getProviderSettings(pid)
+            const tags = [`key: ${keySource(pid)}`]
+            if (s.disabled) tags.push("disabled")
+            if (s.filter?.include?.length || s.filter?.exclude?.length) tags.push("filtered")
+            if (s.overrides && Object.keys(s.overrides).length) tags.push("overrides")
+            return {
+              title: pid,
+              value: pid,
+              description: `${providers[pid].options?.baseURL ?? "-"} — ${tags.join(", ")}`,
+            }
+          }),
+        )
+        if (!chosen) return
+        const s = getProviderSettings(chosen)
+        const parts = [
+          `baseURL: ${providers[chosen].options?.baseURL ?? "-"}`,
+          `key: ${keySource(chosen)}`,
+          `discovery: ${s.disabled ? "disabled" : "enabled"}`,
+        ]
+        if (s.filter?.include?.length) parts.push(`include: ${s.filter.include.join(", ")}`)
+        if (s.filter?.exclude?.length) parts.push(`exclude: ${s.filter.exclude.join(", ")}`)
+        if (s.overrides && Object.keys(s.overrides).length)
+          parts.push(`overrides: ${Object.keys(s.overrides).join(", ")}`)
+        api.ui.toast({ message: `${chosen} · ${parts.join(" · ")}`, variant: "info" })
+      },
+    },
+    {
+      title: "Test Provider",
+      value: "test-provider",
+      description: "Check that a provider's endpoint responds and see its model count",
+      slash: { name: "test-provider" },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+        const chosen = await showSelect<string>(
+          api,
+          "Test which provider?",
+          ids.map((pid) => ({ title: pid, value: pid, description: providers[pid].options?.baseURL })),
+        )
+        if (!chosen) return
+        const p = providers[chosen]
+        if (!p.options?.baseURL) {
+          api.ui.toast({ message: `'${chosen}' has no base URL.`, variant: "error" })
+          return
+        }
+        api.ui.toast({ message: `Testing ${chosen}…`, variant: "info" })
+        try {
+          const models = await fetchEndpointModels(p.options.baseURL, keyFor(chosen, p))
+          api.ui.toast({ message: `${chosen}: OK — ${models.length} model(s) available.`, variant: "success" })
+        } catch (error) {
+          api.ui.toast({ message: `${chosen}: FAILED — ${sanitizeErrorMessage(error)}`, variant: "error" })
+        }
+      },
+    },
+    {
+      title: "Set Default Model",
+      value: "set-default-model",
+      description: "Choose the default model opencode uses for new sessions",
+      slash: { name: "set-default-model" },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+        const provId = await showSelect<string>(
+          api,
+          "Default model — pick the provider first",
+          ids.map((pid) => ({ title: pid, value: pid, description: providers[pid].options?.baseURL })),
+        )
+        if (!provId) return
+        const p = providers[provId]
+        if (!p.options?.baseURL) {
+          api.ui.toast({ message: `'${provId}' has no base URL.`, variant: "error" })
+          return
+        }
+        api.ui.toast({ message: `Loading models from ${provId}…`, variant: "info" })
+        let modelIds: string[]
+        try {
+          modelIds = Object.keys(await discoverAndEnrich(p.options.baseURL, keyFor(provId, p)))
+        } catch (error) {
+          api.ui.toast({ message: `Couldn't load models: ${sanitizeErrorMessage(error)}`, variant: "error" })
+          return
+        }
+        if (modelIds.length === 0) {
+          api.ui.toast({ message: `${provId} returned no models.`, variant: "warning" })
+          return
+        }
+        const modelId = await showSelect<string>(
+          api,
+          `Default model from ${provId}`,
+          modelIds.map((m) => ({ title: m, value: m })),
+        )
+        if (!modelId) return
+        const ref = `${provId}/${modelId}`
+        const file = setDefaultModel(ref)
+        api.ui.toast({
+          message: `Default model set to '${ref}' in ${file}. Restart opencode to apply.`,
+          variant: "success",
+        })
+      },
+    },
+    {
+      title: "Edit Provider",
+      value: "edit-provider",
+      description: "Change an existing provider's base URL",
+      slash: { name: "edit-provider" },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+        const provId = await showSelect<string>(
+          api,
+          "Edit which provider?",
+          ids.map((pid) => ({ title: pid, value: pid, description: providers[pid].options?.baseURL })),
+        )
+        if (!provId) return
+        const current = providers[provId]
+        const rawURL = await showPrompt(
+          api,
+          `New base URL for '${provId}' (currently ${current.options?.baseURL ?? "unset"})`,
+          "https://api.example.com/v1",
+        )
+        const baseURL = rawURL?.trim()
+        if (!baseURL) return
+        const updated: ProviderConfig = {
+          ...current,
+          options: { ...(current.options ?? {}), baseURL },
+          npm: current.npm ?? "@ai-sdk/openai-compatible",
+        }
+        const file = upsertProvider(provId, updated)
+        api.ui.toast({
+          message: `Updated '${provId}' base URL in ${file}. Restart opencode to apply.`,
+          variant: "success",
+        })
+      },
+    },
+    {
+      title: "Enable / Disable Provider",
+      value: "toggle-provider",
+      description: "Turn a provider's model discovery on or off without removing it",
+      slash: { name: "toggle-provider" },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+        const provId = await showSelect<string>(
+          api,
+          "Enable/disable which provider?",
+          ids.map((pid) => ({
+            title: pid,
+            value: pid,
+            description: getProviderSettings(pid).disabled ? "currently disabled" : "currently enabled",
+          })),
+        )
+        if (!provId) return
+        const nowDisabled = !getProviderSettings(provId).disabled
+        setDisabled(provId, nowDisabled)
+        api.ui.toast({
+          message: `'${provId}' ${nowDisabled ? "disabled" : "enabled"}. Restart opencode to apply.`,
+          variant: "success",
+        })
+      },
+    },
+    {
+      title: "Set Model Filter",
+      value: "set-model-filter",
+      description: "Limit which of a provider's models are discovered (include/exclude patterns)",
+      slash: { name: "set-model-filter" },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+        const provId = await showSelect<string>(
+          api,
+          "Filter which provider's models?",
+          ids.map((pid) => ({ title: pid, value: pid, description: providers[pid].options?.baseURL })),
+        )
+        if (!provId) return
+        const current = getProviderSettings(provId).filter
+        const include = parseList(
+          await showPrompt(
+            api,
+            "Only keep models matching (comma-separated regex/text; blank = all)",
+            current?.include?.join(", ") || "e.g. coder, qwen",
+          ),
+        )
+        const exclude = parseList(
+          await showPrompt(
+            api,
+            "Drop models matching (comma-separated regex/text; blank = none)",
+            current?.exclude?.join(", ") || "e.g. embed, whisper",
+          ),
+        )
+        const filter = include || exclude ? { include, exclude } : undefined
+        setFilter(provId, filter)
+        api.ui.toast({
+          message: filter
+            ? `Filter saved for '${provId}'. Restart opencode to apply.`
+            : `Filter cleared for '${provId}'. Restart opencode to apply.`,
+          variant: "success",
+        })
+      },
+    },
+    {
+      title: "Override Model Context",
+      value: "override-model",
+      description: "Set a model's context window when models.dev doesn't know it",
+      slash: { name: "override-model" },
+      onSelect: async () => {
+        const { data: config } = await api.client.config.get()
+        const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
+        const ids = Object.keys(providers)
+        if (ids.length === 0) {
+          api.ui.toast({ message: "No providers configured.", variant: "warning" })
+          return
+        }
+        const provId = await showSelect<string>(
+          api,
+          "Override a model on which provider?",
+          ids.map((pid) => ({ title: pid, value: pid, description: providers[pid].options?.baseURL })),
+        )
+        if (!provId) return
+        const p = providers[provId]
+        if (!p.options?.baseURL) {
+          api.ui.toast({ message: `'${provId}' has no base URL.`, variant: "error" })
+          return
+        }
+        api.ui.toast({ message: `Loading models from ${provId}…`, variant: "info" })
+        let modelIds: string[]
+        try {
+          modelIds = Object.keys(await discoverAndEnrich(p.options.baseURL, keyFor(provId, p)))
+        } catch (error) {
+          api.ui.toast({ message: `Couldn't load models: ${sanitizeErrorMessage(error)}`, variant: "error" })
+          return
+        }
+        if (modelIds.length === 0) {
+          api.ui.toast({ message: `${provId} returned no models.`, variant: "warning" })
+          return
+        }
+        const modelId = await showSelect<string>(
+          api,
+          `Override which model on ${provId}?`,
+          modelIds.map((m) => ({ title: m, value: m })),
+        )
+        if (!modelId) return
+        const detected = await detectContextWindow(p.options.baseURL, keyFor(provId, p), modelId)
+        const options: Array<{ title: string; value: number; description?: string }> = []
+        if (typeof detected.endpoint === "number")
+          options.push({ title: `${detected.endpoint.toLocaleString()} (reported by endpoint)`, value: detected.endpoint })
+        if (typeof detected.modelsDev === "number" && detected.modelsDev !== detected.endpoint)
+          options.push({ title: `${detected.modelsDev.toLocaleString()} (models.dev)`, value: detected.modelsDev })
+        for (const preset of [8192, 16384, 32768, 65536, 131072, 262144])
+          options.push({ title: preset.toLocaleString(), value: preset })
+        const CUSTOM = -1
+        const CLEAR = -2
+        options.push({ title: "Custom…", value: CUSTOM })
+        options.push({ title: "Clear override", value: CLEAR })
+        const picked = await showSelect<number>(api, `Context window for ${modelId}`, options)
+        if (picked === null) return
+        let context: number | undefined
+        if (picked === CLEAR) {
+          context = undefined
+        } else if (picked === CUSTOM) {
+          const raw = await showPrompt(api, `Context window for ${modelId} (tokens)`, "e.g. 131072")
+          const n = Number((raw ?? "").replace(/[_,\s]/g, ""))
+          if (!raw || !Number.isFinite(n) || n <= 0) {
+            api.ui.toast({ message: "Invalid number.", variant: "error" })
+            return
+          }
+          context = Math.floor(n)
+        } else {
+          context = picked
+        }
+        setModelOverride(provId, modelId, { context })
+        api.ui.toast({
+          message: context
+            ? `Set ${provId}/${modelId} context to ${context.toLocaleString()}. Restart opencode to apply.`
+            : `Cleared context override for ${provId}/${modelId}. Restart opencode to apply.`,
+          variant: "success",
         })
       },
     },

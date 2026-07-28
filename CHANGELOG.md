@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-07-28
+
+### Added
+- Provider management commands (TUI + agent tools): `/providers` (`list-providers`), `/test-provider`, `/edit-provider`, and `/toggle-provider` (enable/disable discovery).
+- `/set-default-model`: pick a provider + model and set opencode's default `model` field.
+- Model control: `/set-model-filter` (include/exclude patterns) and `/override-model` (context-window / output overrides with best-effort auto-detect + presets). Per-provider settings are stored in `~/.config/opencode-provider-manager/settings.json`.
+- Discovery now also authenticates with a provider's key from opencode's auth store, not just `options.apiKey` / env.
+
+### Fixed
+- `/reload-models` / `refresh-models` no longer write an unloaded `<cwd>/config.json`. They re-discover, clear the models.dev cache, and report; changes apply on restart.
+
 ## [2.4.0] - 2026-07-28
 
 ### Added

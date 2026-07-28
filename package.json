@@ -1,6 +1,6 @@
 {
   "name": "opencode-provider-manager",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Manage OpenAI-compatible providers in opencode: add/remove providers, manage API keys, and auto-discover models with models.dev enrichment",
   "type": "module",
   "main": "./dist/server.js",
@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node tests/security.test.mjs && node tests/discovery.test.mjs && node tests/opencode-config.test.mjs",
+    "test": "npm run build && node tests/security.test.mjs && node tests/discovery.test.mjs && node tests/opencode-config.test.mjs && node tests/manager.test.mjs",
     "prepare": "npm run build",
     "prepublishOnly": "npm test"
   },

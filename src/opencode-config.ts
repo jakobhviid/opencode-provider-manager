@@ -86,6 +86,20 @@ export function removeProvider(providerId: string): { file: string; existed: boo
 }
 
 /**
+ * Set the default model (`model` field) in the global opencode config,
+ * comment-preserving. `modelRef` is a "providerID/modelID" string. Returns the path.
+ */
+export function setDefaultModel(modelRef: string): string {
+  const file = resolveConfigFilePath()
+  let text = readTextOrEmpty(file)
+  if (text.trim() === "") text = "{}\n"
+  const edits = modify(text, ["model"], modelRef, { formattingOptions: FORMATTING })
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, applyEdits(text, edits))
+  return file
+}
+
+/**
  * Remove a stored credential from opencode's auth store. The SDK exposes no
  * generic credential delete, so we edit auth.json directly. No-op if the store
  * or key is absent (e.g. a non-file backend). Returns whether a key was removed.
@@ -121,5 +135,20 @@ export function listCredentialIds(): string[] {
     return store && typeof store === "object" ? Object.keys(store) : []
   } catch {
     return []
+  }
+}
+
+/**
+ * Read a provider's stored API key from opencode's auth store. Lets discovery
+ * authenticate for providers whose key was set via `/add-provider-auth` (which
+ * `getApiKey` — options.apiKey / env only — would miss). undefined if absent.
+ */
+export function getStoredCredential(providerId: string): string | undefined {
+  try {
+    const store = JSON.parse(fs.readFileSync(resolveAuthFilePath(), "utf8"))
+    const entry = store?.[providerId]
+    return entry && entry.type === "api" && typeof entry.key === "string" ? entry.key : undefined
+  } catch {
+    return undefined
   }
 }

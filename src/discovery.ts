@@ -301,10 +301,37 @@ function endpointMaxOutput(item: EndpointModelResponse): number | undefined {
 
 export type DisplayStyle = "name" | "slug"
 
+export interface ModelFilter {
+  include?: string[]
+  exclude?: string[]
+}
+
+export interface DiscoverOptions {
+  filter?: ModelFilter
+  overrides?: Record<string, { context?: number; output?: number }>
+}
+
+/** Whether a model id survives an include/exclude filter (case-insensitive regex, substring fallback). */
+export function modelPassesFilter(id: string, filter?: ModelFilter): boolean {
+  if (!filter) return true
+  const matches = (patterns: string[] | undefined) =>
+    (patterns ?? []).some((p) => {
+      try {
+        return new RegExp(p, "i").test(id)
+      } catch {
+        return id.toLowerCase().includes(p.toLowerCase())
+      }
+    })
+  if (filter.include && filter.include.length > 0 && !matches(filter.include)) return false
+  if (filter.exclude && filter.exclude.length > 0 && matches(filter.exclude)) return false
+  return true
+}
+
 export async function discoverAndEnrich(
   baseURL: string,
   apiKey?: string,
   displayStyle: DisplayStyle = "slug",
+  options: DiscoverOptions = {},
 ): Promise<Record<string, EnrichedModel>> {
   const rawModels = await fetchEndpointModels(baseURL, apiKey)
   const lookup = await getLookupMap()
@@ -312,6 +339,7 @@ export async function discoverAndEnrich(
 
   for (const item of rawModels) {
     const id = sanitizeModelId(item.id)
+    if (!modelPassesFilter(id, options.filter)) continue
     const key = normalizeModelId(id)
     const meta = lookup.get(key)
     const caps = parseEndpointCapabilities(item)
@@ -372,8 +400,42 @@ export async function discoverAndEnrich(
     if (model.release_date === undefined) delete model.release_date
     if (model.status === undefined) delete model.status
 
+    const override = options.overrides?.[id]
+    if (override) {
+      if (typeof override.context === "number") model.limit.context = override.context
+      if (typeof override.output === "number") model.limit.output = override.output
+    }
+
     result[id] = model
   }
 
   return result
+}
+
+/**
+ * Best-effort context-window detection for a single model: what the endpoint
+ * reports (if anything) and what models.dev knows. Many self-hosted backends
+ * (e.g. llama-swap) don't report context in /v1/models, so both may be undefined.
+ */
+export async function detectContextWindow(
+  baseURL: string,
+  apiKey: string | undefined,
+  modelId: string,
+): Promise<{ endpoint?: number; modelsDev?: number }> {
+  let endpoint: number | undefined
+  try {
+    const models = await fetchEndpointModels(baseURL, apiKey)
+    const item = models.find((m) => sanitizeModelId(m.id) === modelId || m.id === modelId)
+    if (item) endpoint = endpointContextWindow(item)
+  } catch {
+    // ignore — detection is best-effort
+  }
+  let modelsDev: number | undefined
+  try {
+    const lookup = await getLookupMap()
+    modelsDev = lookup.get(normalizeModelId(modelId))?.limit.context
+  } catch {
+    // ignore
+  }
+  return { endpoint, modelsDev }
 }

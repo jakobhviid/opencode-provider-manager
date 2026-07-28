@@ -1,6 +1,6 @@
 # OpenCode Provider Manager
 
-A standalone [opencode](https://opencode.ai) plugin for OpenAI-compatible providers. It lets you **add and remove providers, manage their API keys, and automatically discover their models** — enriched with [models.dev](https://models.dev) metadata — from the TUI or via agent tools.
+A standalone [opencode](https://opencode.ai) plugin for OpenAI-compatible providers. **Add, remove, edit, and test providers; manage their API keys; enable/disable, filter, or override their models; and set your default model** — all from the TUI or via agent tools. Models are discovered automatically and enriched with [models.dev](https://models.dev) metadata.
 
 > **Fork notice.** This is a fork of [b3nw/opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers) (full credit in [Credits](#credits)). It fixes provider persistence so providers added through the UI survive a restart, and adds provider- and key-management commands. **Install it from this repository — not the upstream npm package,** which does not include these changes.
 
@@ -9,10 +9,17 @@ A standalone [opencode](https://opencode.ai) plugin for OpenAI-compatible provid
 | Command (TUI) | Agent tool | What it does |
 | --- | --- | --- |
 | `/add-provider` | `add-provider` | Add a new OpenAI-compatible provider (validates the endpoint, discovers models) |
-| `/remove-provider` | `remove-provider` | Remove a provider and delete its stored credential |
+| `/edit-provider` | — | Change an existing provider's base URL |
+| `/remove-provider` | `remove-provider` | Remove a provider and delete its stored credential + settings |
+| `/providers` | `list-providers` | Show providers with base URL, key source, disabled state, filters/overrides |
+| `/test-provider` | `test-provider` | Check that a provider's endpoint responds and report its model count |
+| `/toggle-provider` | `toggle-provider` | Enable/disable a provider's discovery without removing it |
 | `/add-provider-auth` | `add-provider-auth` | Set (or replace) the API key for an existing provider |
 | `/remove-provider-auth` | `remove-provider-auth` | Delete a provider's stored key (keeps the provider) |
-| `/reload-models` (`/refresh-models`) | `refresh-models` | Re-discover models for all dynamic providers without restarting |
+| `/set-default-model` | `set-default-model` | Choose opencode's default model (writes the `model` field) |
+| `/set-model-filter` | `set-model-filter` | Include/exclude patterns for which models a provider discovers |
+| `/override-model` | `override-model` | Override a model's context window / output when models.dev doesn't know it |
+| `/reload-models` (`/refresh-models`) | `refresh-models` | Re-discover all providers' models; restart to apply |
 
 ## How model discovery works
 
@@ -91,6 +98,16 @@ Set `"dynamic": true` to force re-discovery even when a `models` list is present
 1. The `/add-provider` / `/add-provider-auth` commands (stored in opencode's auth store)
 2. `options.apiKey` in config
 3. The environment variable `OPENCODE_LOCAL_<PROVIDER_ID>_API_KEY`
+
+### Filtering, overrides, and disabling
+
+Per-provider settings that don't belong in your opencode config (opencode strips unknown provider keys) are kept in `~/.config/opencode-provider-manager/settings.json`:
+
+- **`/set-model-filter`** — keep only models matching include patterns and/or drop models matching exclude patterns (case-insensitive regex, substring fallback). Useful for noisy endpoints that expose embeddings or deprecated models.
+- **`/override-model`** — set a model's context window (and max output) when models.dev doesn't know it. The picker offers any value the endpoint reports, the models.dev value, common presets, or a custom number.
+- **`/toggle-provider`** — disable a provider's discovery without removing it.
+
+Changes apply on the next opencode restart.
 
 ## Discovery eligibility
 
