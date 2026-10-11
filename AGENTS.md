@@ -40,8 +40,10 @@ Guidance for AI coding agents working in this repository.
 - Pushing to `main` runs `.github/workflows/release.yml`: reads the version from
   `package.json` (the single source of truth — bump it there to cut a release),
   builds the CLI for 4 targets, stages the plugin, publishes a GitHub release
-  (tarballs + bottles), and pushes the rendered formula to `jakobhviid/homebrew-tap`
-  (via the `TAP_DEPLOY_KEY` deploy-key secret).
+  (tarballs + bottles), and pushes the rendered formula to the
+  `auto/formula-opencode-provider-manager` branch of `jakobhviid/homebrew-tap`
+  (via the `TAP_DEPLOY_KEY` deploy-key secret); the tap's gate installs and
+  tests it there and lands it on `main` only if it passes.
 - **Plugin packaging** (verified against real opencode): ship tsc `dist/` +
   `package.json` + a `node_modules` pruned to the runtime closure
   (`@opencode-ai/plugin` + `zod` + `jsonc-parser`, ~6 MB). Do NOT bundle (esbuild
