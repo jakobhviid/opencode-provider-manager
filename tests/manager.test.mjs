@@ -55,3 +55,17 @@ test("modelPassesFilter: include, exclude, regex and bad-regex fallback", () => 
   assert.equal(modelPassesFilter("qwen", { include: ["^qw"] }), true) // regex
   assert.equal(modelPassesFilter("qwen", { include: ["[invalid"] }), false) // bad regex -> substring, no match
 })
+
+test("settings: writes keep top-level keys owned by someone else", () => {
+  fs.writeFileSync(settings.settingsFilePath(), JSON.stringify({ onlyConfiguredProviders: true, providers: {} }))
+  assert.equal(settings.getOnlyConfiguredProviders(), true)
+  settings.setDisabled("p4", true)
+  assert.equal(settings.getOnlyConfiguredProviders(), true)
+  settings.setDisabled("p4", false)
+  assert.equal(JSON.parse(fs.readFileSync(settings.settingsFilePath(), "utf8")).onlyConfiguredProviders, true)
+})
+
+test("settings: only-configured is off without the key", () => {
+  fs.writeFileSync(settings.settingsFilePath(), JSON.stringify({ providers: {} }))
+  assert.equal(settings.getOnlyConfiguredProviders(), false)
+})

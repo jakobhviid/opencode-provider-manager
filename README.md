@@ -51,15 +51,17 @@ opencode's native `providers` form (`"package": "aisdk:@ai-sdk/openai-compatible
 
 ### Show only your own providers
 
-opencode lists every provider it knows about — its own hosted models, plus any service you've logged into. To see only the providers you add, give the config an allow-list:
+opencode lists every provider it knows about — its own hosted models, plus any service you've logged into. To list only the providers your config files declare, set one flag in `~/.config/opencode-provider-manager/settings.json`:
 
-```jsonc
+```json
 {
-  "enabled_providers": ["nous", "oMLX"]
+  "onlyConfiguredProviders": true
 }
 ```
 
-`/pm-add-provider` and `/pm-remove-provider` keep this list in step, so a provider you add appears in `/models` straight away. Without the key, every provider is shown.
+Each machine then shows what its own config declares — the global `opencode.jsonc` plus any project `opencode.json[c]` / `.opencode/opencode.json[c]` up to the git root — so the same setting works across machines with different providers. A service you log into with `/connect` stays hidden until its id appears in a config file. The setting applies live; nothing else in the file needs to exist.
+
+opencode's own `enabled_providers` allow-list also works. It is a fixed list per machine; when a config has one, `/pm-add-provider` and `/pm-remove-provider` keep it in step.
 
 ### Where API keys come from
 1. `options.apiKey` (or `settings.apiKey`) in config — what `/pm-add-provider` writes when given a key

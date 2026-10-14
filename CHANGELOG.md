@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-10-14
+
+### Added
+- `onlyConfiguredProviders` in `settings.json` lists only providers declared in an opencode config file (global, plus project configs up to the git root), hiding opencode's hosted models and logged-in services. Each machine derives the set from its own config, so one fleet-wide setting needs no per-machine provider list.
+- Changes to `settings.json` made outside the plugin (a fleet manager, a hand edit) apply live.
+
+### Fixed
+- Writing `settings.json` keeps top-level keys the plugin doesn't manage.
+
 ## [3.1.0] - 2026-10-14
 
 ### Added

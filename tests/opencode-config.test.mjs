@@ -99,3 +99,16 @@ test("without an enabled_providers list, none is created", () => {
   upsertProvider("local", { name: "local", baseURL: "http://127.0.0.1:8000/v1" })
   assert.equal("enabled_providers" in JSON.parse(fs.readFileSync(CONFIG, "utf8")), false)
 })
+
+test("configuredProviderIds unions the global config and project configs up to the git root", async () => {
+  const { configuredProviderIds } = await import("../dist/opencode-config.js")
+  fs.writeFileSync(CONFIG, `{ // global\n "provider": { "nous": {} } }`)
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "opm-proj-"))
+  const sub = path.join(root, "packages", "app")
+  fs.mkdirSync(path.join(root, ".git"), { recursive: true })
+  fs.mkdirSync(path.join(sub, ".opencode"), { recursive: true })
+  fs.writeFileSync(path.join(root, "opencode.json"), `{ "providers": { "team": {} } }`)
+  fs.writeFileSync(path.join(sub, ".opencode", "opencode.jsonc"), `{ "provider": { "local": {} } }`)
+  assert.deepEqual([...configuredProviderIds(sub)].sort(), ["local", "nous", "team"])
+  fs.rmSync(root, { recursive: true, force: true })
+})

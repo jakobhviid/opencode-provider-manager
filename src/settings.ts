@@ -16,7 +16,14 @@ export interface ProviderSettings {
 }
 
 interface SettingsFile {
+  /**
+   * Show only providers declared in an opencode config file, hiding opencode's
+   * own hosted models and logged-in services. A fleet manager may own this key,
+   * so writes preserve it (and any other top-level key) as found.
+   */
+  onlyConfiguredProviders?: boolean
   providers: Record<string, ProviderSettings>
+  [key: string]: unknown
 }
 
 export function settingsFilePath(): string {
@@ -32,8 +39,9 @@ function read(): SettingsFile {
     return { providers: {} }
   }
   if (!parsed || typeof parsed !== "object") return { providers: {} }
-  const providers = (parsed as Record<string, unknown>).providers
-  return { providers: providers && typeof providers === "object" ? (providers as SettingsFile["providers"]) : {} }
+  const file = parsed as Record<string, unknown>
+  const providers = file.providers && typeof file.providers === "object" ? (file.providers as SettingsFile["providers"]) : {}
+  return { ...file, providers }
 }
 
 function write(data: SettingsFile): void {
@@ -94,4 +102,9 @@ export function removeProviderSettings(id: string): void {
     delete data.providers[id]
     write(data)
   }
+}
+
+/** Whether only config-declared providers are listed. Off unless the settings file says so. */
+export function getOnlyConfiguredProviders(): boolean {
+  return read().onlyConfiguredProviders === true
 }

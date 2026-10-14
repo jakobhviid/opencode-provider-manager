@@ -13,10 +13,19 @@ import {
   type EndpointModel,
 } from "./discovery.js"
 import { isValidUrl, sanitizeErrorMessage, sanitizeModelId } from "./security.js"
-import { hasProvider, removeProvider, setDefaultModel, setProviderBaseURL, upsertProvider } from "./opencode-config.js"
 import {
+  configuredProviderIds,
+  hasProvider,
+  removeProvider,
+  setDefaultModel,
+  setProviderBaseURL,
+  upsertProvider,
+} from "./opencode-config.js"
+import {
+  getOnlyConfiguredProviders,
   getProviderSettings,
   removeProviderSettings,
+  settingsFilePath,
   setDisabled,
   setDisplayStyle,
   setFilter,
@@ -203,6 +212,14 @@ const server: Plugin.Plugin["setup"] = async (ctx) => {
         })
       }
     }
+    // Each machine lists what its own config files declare; nothing here names a provider.
+    if (getOnlyConfiguredProviders()) {
+      const configured = configuredProviderIds(ctx.location.directory)
+      for (const model of editor.list()) {
+        const providerID = String(model.providerID)
+        if (!configured.has(providerID)) editor.remove(providerID, String(model.id))
+      }
+    }
     const added = [...next.keys()].some((id) => targets.get(id)?.baseURL !== next.get(id)?.baseURL)
     targets = next
     // Transforms are synchronous; discovery for new or re-pointed providers runs after.
@@ -211,6 +228,15 @@ const server: Plugin.Plugin["setup"] = async (ctx) => {
 
   const timer = setInterval(() => void refresh(), REFRESH_INTERVAL)
   void refresh()
+
+  // The settings file may change outside the plugin (temper, a hand edit); apply it live.
+  let settingsTimer: ReturnType<typeof setTimeout> | undefined
+  const settingsDir = path.dirname(settingsFilePath())
+  fs.mkdirSync(settingsDir, { recursive: true })
+  const settingsWatcher = fs.watch(settingsDir, () => {
+    clearTimeout(settingsTimer)
+    settingsTimer = setTimeout(() => void ctx.model.reload().then(() => refresh()), 200)
+  })
 
   /** Re-enrich a provider from its cached /models response after a settings change, then reload. */
   async function reenrich(providerId: string): Promise<void> {
@@ -370,6 +396,8 @@ const server: Plugin.Plugin["setup"] = async (ctx) => {
 
   return async () => {
     clearInterval(timer)
+    clearTimeout(settingsTimer)
+    settingsWatcher.close()
     await registration.dispose()
   }
 }

@@ -164,3 +164,32 @@ export function setDefaultModel(modelRef: string): string {
   write(file, edit(readText(file), ["model"], modelRef))
   return file
 }
+
+function providerIdsIn(file: string): string[] {
+  let text: string
+  try {
+    text = fs.readFileSync(file, "utf8")
+  } catch {
+    return []
+  }
+  const parsed = parseJsonc(text) as Parsed
+  return [...Object.keys(parsed?.provider ?? {}), ...Object.keys(parsed?.providers ?? {})]
+}
+
+/**
+ * Every provider id declared in an opencode config file that applies to
+ * `directory`: the global config, plus project configs (opencode.json[c] and
+ * .opencode/opencode.json[c]) from `directory` up to its git root.
+ */
+export function configuredProviderIds(directory: string): Set<string> {
+  const ids = new Set(providerIdsIn(resolveConfigFilePath()))
+  let dir = path.resolve(directory)
+  while (true) {
+    for (const name of ["opencode.json", "opencode.jsonc", ".opencode/opencode.json", ".opencode/opencode.jsonc"])
+      for (const id of providerIdsIn(path.join(dir, name))) ids.add(id)
+    const parent = path.dirname(dir)
+    if (parent === dir || fs.existsSync(path.join(dir, ".git"))) break
+    dir = parent
+  }
+  return ids
+}
