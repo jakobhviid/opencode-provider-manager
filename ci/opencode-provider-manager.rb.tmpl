@@ -42,8 +42,9 @@ class OpencodeProviderManager < Formula
 
   def install
     bin.install "opencode-provider-manager"
-    # The plugin JS package (package.json + dist + prod node_modules). brew owns
-    # and upgrades it here; `setup` points opencode at the stable opt/ path.
+    # The plugin JS package (package.json + server.js/tui.js + dist + prod
+    # node_modules). brew owns and upgrades it here; `setup` points opencode at
+    # the stable opt/ path.
     libexec.install "plugin"
     generate_completions_from_executable(bin/"opencode-provider-manager", "completions")
     (man1/"opencode-provider-manager.1").write Utils.safe_popen_read(bin/"opencode-provider-manager", "man")

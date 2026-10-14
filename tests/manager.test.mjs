@@ -40,12 +40,11 @@ test("settings: removeProviderSettings clears everything", () => {
   assert.deepEqual(settings.getProviderSettings("p2"), {})
 })
 
-test("settings: auto-reload defaults on and toggles", () => {
-  assert.equal(settings.getAutoReload(), true) // default on
-  settings.setAutoReload(false)
-  assert.equal(settings.getAutoReload(), false)
-  settings.setAutoReload(true)
-  assert.equal(settings.getAutoReload(), true)
+test("settings: display style stores only the non-default", () => {
+  settings.setDisplayStyle("p3", "name")
+  assert.equal(settings.getProviderSettings("p3").displayStyle, "name")
+  settings.setDisplayStyle("p3", "slug")
+  assert.deepEqual(settings.getProviderSettings("p3"), {})
 })
 
 test("modelPassesFilter: include, exclude, regex and bad-regex fallback", () => {

@@ -1,27 +1,21 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import type { DisplayStyle, ModelFilter, ModelOverride } from "./discovery.js"
 
 // Plugin-owned settings live OUTSIDE opencode's config on purpose: opencode strips
-// unknown provider keys during config decode, so filter/override/disabled state can't
-// reliably live in the provider block. Keeping it here also avoids polluting the
-// user's opencode.jsonc.
-
-export interface ModelOverride {
-  context?: number
-  output?: number
-}
+// unknown provider keys during config decode, so per-provider plugin state can't
+// live in the provider block. Keeping it here also avoids polluting the user's
+// opencode.jsonc.
 
 export interface ProviderSettings {
   disabled?: boolean
-  filter?: { include?: string[]; exclude?: string[] }
+  displayStyle?: DisplayStyle
+  filter?: ModelFilter
   overrides?: Record<string, ModelOverride>
 }
 
 interface SettingsFile {
-  // When to auto-apply changes by reloading opencode. Default on (undefined = on);
-  // set false to disable auto-reload and fall back to a manual restart.
-  autoReload?: boolean
   providers: Record<string, ProviderSettings>
 }
 
@@ -38,31 +32,21 @@ function read(): SettingsFile {
     return { providers: {} }
   }
   if (!parsed || typeof parsed !== "object") return { providers: {} }
-  const obj = parsed as Record<string, unknown>
-  // Migrate the older flat shape (Record<providerId, ProviderSettings>) into { providers }.
-  if (!("providers" in obj)) {
-    const { autoReload, ...rest } = obj
-    return {
-      autoReload: typeof autoReload === "boolean" ? autoReload : undefined,
-      providers: rest as Record<string, ProviderSettings>,
-    }
-  }
-  return {
-    autoReload: typeof obj.autoReload === "boolean" ? obj.autoReload : undefined,
-    providers: (obj.providers as Record<string, ProviderSettings>) ?? {},
-  }
+  const providers = (parsed as Record<string, unknown>).providers
+  return { providers: providers && typeof providers === "object" ? (providers as SettingsFile["providers"]) : {} }
 }
 
 function write(data: SettingsFile): void {
   const file = settingsFilePath()
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify(data, null, 2))
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n")
 }
 
 /** Prune empty settings so the store stays tidy (empty object => remove the key). */
 function isEmpty(s: ProviderSettings): boolean {
   return (
     !s.disabled &&
+    !s.displayStyle &&
     (!s.filter || (!s.filter.include?.length && !s.filter.exclude?.length)) &&
     (!s.overrides || Object.keys(s.overrides).length === 0)
   )
@@ -85,7 +69,12 @@ export function setDisabled(id: string, disabled: boolean): void {
   updateProviderSettings(id, { disabled: disabled || undefined })
 }
 
-export function setFilter(id: string, filter: ProviderSettings["filter"] | undefined): void {
+export function setDisplayStyle(id: string, displayStyle: DisplayStyle | undefined): void {
+  // "slug" is the default, so only "name" is stored.
+  updateProviderSettings(id, { displayStyle: displayStyle === "name" ? "name" : undefined })
+}
+
+export function setFilter(id: string, filter: ModelFilter | undefined): void {
   updateProviderSettings(id, { filter })
 }
 
@@ -105,18 +94,4 @@ export function removeProviderSettings(id: string): void {
     delete data.providers[id]
     write(data)
   }
-}
-
-// ── global reload preference ──
-
-/** Whether to auto-apply changes by reloading opencode. Defaults to true. */
-export function getAutoReload(): boolean {
-  return read().autoReload !== false
-}
-
-/** Enable/disable auto-reload. Stored only when disabled (default is enabled). */
-export function setAutoReload(enabled: boolean): void {
-  const data = read()
-  data.autoReload = enabled ? undefined : false
-  write(data)
 }

@@ -1,30 +1,22 @@
 {
   "name": "opencode-provider-manager",
-  "version": "2.7.1",
-  "description": "Manage OpenAI-compatible providers in opencode: add/remove providers, manage API keys, and auto-discover models with models.dev enrichment",
+  "version": "3.0.0",
+  "description": "Dynamic model discovery for OpenAI-compatible providers in opencode, plus provider management commands (pm-*), with models.dev enrichment",
   "type": "module",
-  "main": "./dist/server.js",
-  "types": "./dist/server.d.ts",
+  "main": "./server.js",
   "files": [
-    "dist"
+    "dist",
+    "server.js",
+    "tui.js"
   ],
   "exports": {
-    ".": {
-      "types": "./dist/server.d.ts",
-      "default": "./dist/server.js"
-    },
-    "./server": {
-      "types": "./dist/server.d.ts",
-      "default": "./dist/server.js"
-    },
-    "./tui": {
-      "types": "./dist/tui.d.ts",
-      "default": "./dist/tui.js"
-    }
+    ".": "./server.js",
+    "./server": "./server.js",
+    "./tui": "./tui.js"
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node tests/security.test.mjs && node tests/discovery.test.mjs && node tests/opencode-config.test.mjs && node tests/manager.test.mjs",
+    "test": "npm run build && node --test tests/",
     "prepare": "npm run build",
     "prepublishOnly": "npm test"
   },
@@ -47,19 +39,14 @@
     "url": "git+ssh://git@github.com/jakobhviid/opencode-provider-manager.git"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.0",
     "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
-    "@opencode-ai/sdk": "^1.14.0",
-    "@opentui/solid": "^0.2.0",
+    "@opencode/plugin": "2.0.25",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
   },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "^1.14.0"
-  },
   "engines": {
-    "opencode": ">=1.14.0"
+    "opencode": ">=2.0.0"
   }
 }

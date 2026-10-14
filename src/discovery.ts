@@ -1,39 +1,22 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import * as os from "node:os"
-import { createRequire } from "node:module"
 import { isValidUrl, sanitizeModelId, sanitizeErrorMessage } from "./security.js"
 
-const require = createRequire(import.meta.url)
-const { version: PKG_VERSION } = require("../package.json")
-
 const MODELS_DEV_URL = "https://models.dev/api.json"
-const CACHE_DIR = path.join(
-  os.homedir() || "/tmp",
-  ".cache",
-  "opencode-dynamic-providers",
-)
+const CACHE_DIR = path.join(os.homedir() || "/tmp", ".cache", "opencode-provider-manager")
 const CACHE_FILE = path.join(CACHE_DIR, "models-dev.json")
 const CACHE_TTL = 6 * 60 * 60 * 1000 // 6 hours
 
-
-// ── models.dev types (subset matching OpenCode's schema) ──
+// ── models.dev types (the subset this plugin reads) ──
 
 interface ModelsDevModel {
   id: string
   name: string
   family?: string
-  release_date: string
   attachment: boolean
   reasoning: boolean
-  temperature: boolean
   tool_call: boolean
-  cost?: {
-    input: number
-    output: number
-    cache_read?: number
-    cache_write?: number
-  }
   limit: {
     context: number
     input?: number
@@ -43,26 +26,18 @@ interface ModelsDevModel {
     input: string[]
     output: string[]
   }
-  status?: string
 }
 
 interface ModelsDevProvider {
-  id: string
-  name: string
-  npm?: string
-  api?: string
   models: Record<string, ModelsDevModel>
 }
 
 // ── models.dev cache + lookup ──
 
 // Module-level singleton: built once per process on first access, then shared
-// across all providers in a single startup cycle. Cleared by clearModelsDevCache()
-// (e.g. via the reload-models TUI command) so the next discoverAndEnrich call
-// rebuilds it with fresh data.
+// by every provider. clearModelsDevCache() forces the next lookup to refetch.
 let lookupMap: Map<string, ModelsDevModel> | null = null
 let lookupPromise: Promise<Map<string, ModelsDevModel>> | null = null
-// Set by clearModelsDevCache() to force one fetch to bypass the freshness check.
 let forceRefresh = false
 
 export function normalizeModelId(id: string): string {
@@ -84,9 +59,7 @@ interface CacheEntry {
 
 function readCacheEntry(): CacheEntry | null {
   try {
-    if (!fs.existsSync(CACHE_FILE)) return null
-    const content = fs.readFileSync(CACHE_FILE, "utf-8")
-    return JSON.parse(content) as CacheEntry
+    return JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8")) as CacheEntry
   } catch {
     return null
   }
@@ -94,14 +67,8 @@ function readCacheEntry(): CacheEntry | null {
 
 function writeCache(data: Record<string, ModelsDevProvider>): void {
   try {
-    if (!fs.existsSync(CACHE_DIR)) {
-      fs.mkdirSync(CACHE_DIR, { mode: 0o700, recursive: true })
-    }
-    fs.writeFileSync(
-      CACHE_FILE,
-      JSON.stringify({ timestamp: Date.now(), data }, null, 2),
-      { mode: 0o600 },
-    )
+    fs.mkdirSync(CACHE_DIR, { mode: 0o700, recursive: true })
+    fs.writeFileSync(CACHE_FILE, JSON.stringify({ timestamp: Date.now(), data }), { mode: 0o600 })
   } catch {
     // ignore write errors
   }
@@ -109,17 +76,17 @@ function writeCache(data: Record<string, ModelsDevProvider>): void {
 
 async function fetchModelsDevCatalog(): Promise<Record<string, ModelsDevProvider>> {
   const entry = readCacheEntry()
-  const isFresh = !forceRefresh && entry && (Date.now() - entry.timestamp <= CACHE_TTL)
+  const isFresh = !forceRefresh && entry && Date.now() - entry.timestamp <= CACHE_TTL
   forceRefresh = false
   if (isFresh && entry) return entry.data
 
   try {
     const res = await fetch(MODELS_DEV_URL, {
-      headers: { "User-Agent": `opencode-provider-manager/${PKG_VERSION}` },
+      headers: { "User-Agent": "opencode-provider-manager" },
       signal: AbortSignal.timeout(10_000),
     })
     if (res.ok) {
-      const data = await res.json() as Record<string, ModelsDevProvider>
+      const data = (await res.json()) as Record<string, ModelsDevProvider>
       writeCache(data)
       return data
     }
@@ -127,11 +94,7 @@ async function fetchModelsDevCatalog(): Promise<Record<string, ModelsDevProvider
     // Ignore fetch error, fall back to stale cache if available
   }
 
-  if (entry) {
-    return entry.data
-  }
-
-  return {}
+  return entry?.data ?? {}
 }
 
 function buildLookupMap(catalog: Record<string, ModelsDevProvider>): Map<string, ModelsDevModel> {
@@ -151,7 +114,7 @@ function buildLookupMap(catalog: Record<string, ModelsDevProvider>): Map<string,
 async function getLookupMap(): Promise<Map<string, ModelsDevModel>> {
   if (lookupMap) return lookupMap
   if (!lookupPromise) {
-    lookupPromise = fetchModelsDevCatalog().then(catalog => {
+    lookupPromise = fetchModelsDevCatalog().then((catalog) => {
       lookupMap = buildLookupMap(catalog)
       return lookupMap
     })
@@ -162,51 +125,47 @@ async function getLookupMap(): Promise<Map<string, ModelsDevModel>> {
 export function clearModelsDevCache(): void {
   lookupMap = null
   lookupPromise = null
-  // Force the next fetch to bypass the freshness check, but keep the disk cache
-  // as an offline fallback (do NOT unlink it).
+  // Bypass the freshness check once, but keep the disk cache as an offline fallback.
   forceRefresh = true
 }
 
-// ── endpoint model response types ──
+// ── endpoint model response ──
 
-interface EndpointModelResponse {
+// OpenAI's Model object only guarantees `id`; everything else here is the
+// OpenRouter / llama-swap / vLLM convention, read when present.
+export interface EndpointModel {
   id: string
   name?: string
+  owned_by?: string
   context_length?: number
+  context_window?: number
+  max_model_len?: number
   max_completion_tokens?: number
   max_output_tokens?: number
-  max_model_len?: number
-  context_window?: number
-  input_cost?: number
-  output_cost?: number
-  capabilities?: {
-    tool_choice?: boolean
-    function_calling?: boolean
-    reasoning?: boolean
-    vision?: boolean
-    temperature?: boolean
-    structured_output?: boolean
+  architecture?: {
+    input_modalities?: string[]
+    output_modalities?: string[]
   }
+  capabilities?: Record<string, unknown>
   supported_parameters?: string[]
+  meta?: {
+    llamaswap?: {
+      pipeline_tag?: string
+      family?: string
+    }
+  }
 }
 
-// ── endpoint discovery ──
-
-export async function fetchEndpointModels(
-  baseURL: string,
-  apiKey?: string,
-): Promise<EndpointModelResponse[]> {
+export async function fetchEndpointModels(baseURL: string, apiKey?: string): Promise<EndpointModel[]> {
   if (!isValidUrl(baseURL)) return []
 
   const url = new URL(baseURL)
   const cleanPath = url.pathname.replace(/\/+$/, "")
-  const modelsPath = cleanPath.endsWith("/models")
-    ? cleanPath
-    : `${cleanPath}/models`
+  const modelsPath = cleanPath.endsWith("/models") ? cleanPath : `${cleanPath}/models`
   const modelsUrl = new URL(modelsPath, url.origin)
   modelsUrl.search = url.search
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  const headers: Record<string, string> = { Accept: "application/json" }
   if (apiKey) {
     headers["Authorization"] = `Bearer ${apiKey}`
   }
@@ -221,16 +180,14 @@ export async function fetchEndpointModels(
     try {
       const body = await res.text()
       if (body) detail = sanitizeErrorMessage(body.slice(0, 500))
-    } catch { /* ignore read errors */ }
+    } catch {
+      /* ignore read errors */
+    }
     throw new Error(`HTTP ${res.status}: ${detail}`)
   }
 
   const rawData = await res.json()
-  const data = Array.isArray(rawData)
-    ? rawData
-    : Array.isArray(rawData?.data)
-      ? rawData.data
-      : null
+  const data = Array.isArray(rawData) ? rawData : Array.isArray(rawData?.data) ? rawData.data : null
 
   if (!data) {
     throw new Error("Unexpected response format from /v1/models")
@@ -239,77 +196,56 @@ export async function fetchEndpointModels(
   return data.filter((item: Record<string, unknown>) => typeof item?.id === "string")
 }
 
+// ── classification ──
+
+// Hugging Face pipeline tags that are chat models. Everything else an endpoint
+// tags (embeddings, rerankers, TTS/STT, image generation) can't hold a conversation.
+const CHAT_PIPELINES = new Set(["text-generation", "image-text-to-text"])
+const NON_CHAT_CAPABILITIES = [
+  "embedding",
+  "embeddings",
+  "reranker",
+  "rerank",
+  "image_generation",
+  "image_to_image",
+  "audio_transcriptions",
+  "audio_speech",
+  "text_to_speech",
+]
+
+/** Whether an endpoint entry is a chat model, judged from the metadata it reports. Unannotated entries count as chat. */
+export function isChatModel(item: EndpointModel): boolean {
+  const pipeline = item.meta?.llamaswap?.pipeline_tag
+  if (pipeline) return CHAT_PIPELINES.has(pipeline)
+  if (NON_CHAT_CAPABILITIES.some((name) => item.capabilities?.[name] === true)) return false
+  const output = item.architecture?.output_modalities
+  if (output && !output.includes("text")) return false
+  return true
+}
+
 // ── enrichment: merge endpoint data with models.dev ──
 
-export interface EnrichedModel {
+export type DisplayStyle = "name" | "slug"
+
+/** A discovered model in the shape the server plugin writes into opencode's model catalog. */
+export interface DiscoveredModel {
+  id: string
   name: string
   family?: string
-  release_date?: string
-  status?: string
-  attachment?: boolean
-  reasoning?: boolean
-  temperature?: boolean
-  tool_call?: boolean
-  cost?: {
-    input: number
-    output: number
-    cache_read?: number
-    cache_write?: number
-  }
-  limit: {
-    context: number
-    input?: number
-    output: number
-  }
-  modalities?: {
-    input: string[]
-    output: string[]
-  }
+  tools: boolean
+  vision: boolean
+  context: number
+  output: number
 }
-
-function parseEndpointCapabilities(item: EndpointModelResponse) {
-  let toolCall = false
-  let reasoning = false
-  let temperature = false
-
-  if (item.capabilities) {
-    if (item.capabilities.function_calling || item.capabilities.tool_choice) toolCall = true
-    if (item.capabilities.reasoning) reasoning = true
-    if (item.capabilities.temperature) temperature = true
-  }
-
-  if (item.supported_parameters) {
-    if (item.supported_parameters.includes("tools") || item.supported_parameters.includes("tool_choice")) {
-      toolCall = true
-    }
-    if (item.supported_parameters.includes("temperature")) {
-      temperature = true
-    }
-  }
-
-  return { toolCall, reasoning, temperature }
-}
-
-function endpointContextWindow(item: EndpointModelResponse): number | undefined {
-  const v = item.context_window ?? item.max_model_len ?? item.context_length
-  return typeof v === "number" ? v : undefined
-}
-
-function endpointMaxOutput(item: EndpointModelResponse): number | undefined {
-  const v = item.max_completion_tokens ?? item.max_output_tokens
-  return typeof v === "number" ? v : undefined
-}
-
-export type DisplayStyle = "name" | "slug"
 
 export interface ModelFilter {
   include?: string[]
   exclude?: string[]
 }
 
-export interface DiscoverOptions {
-  filter?: ModelFilter
-  overrides?: Record<string, { context?: number; output?: number }>
+export interface ModelOverride {
+  context?: number
+  output?: number
 }
 
 /** Whether a model id survives an include/exclude filter (case-insensitive regex, substring fallback). */
@@ -328,115 +264,93 @@ export function modelPassesFilter(id: string, filter?: ModelFilter): boolean {
   return true
 }
 
-export async function discoverAndEnrich(
-  baseURL: string,
-  apiKey?: string,
-  displayStyle: DisplayStyle = "slug",
-  options: DiscoverOptions = {},
-): Promise<Record<string, EnrichedModel>> {
-  const rawModels = await fetchEndpointModels(baseURL, apiKey)
-  const lookup = await getLookupMap()
-  const result: Record<string, EnrichedModel> = {}
-
-  for (const item of rawModels) {
-    const id = sanitizeModelId(item.id)
-    if (!modelPassesFilter(id, options.filter)) continue
-    const key = normalizeModelId(id)
-    const meta = lookup.get(key)
-    const caps = parseEndpointCapabilities(item)
-
-    const epContext = endpointContextWindow(item)
-    const epOutput = endpointMaxOutput(item)
-
-    const displayName = displayStyle === "slug"
-      ? id
-      : (item.name && item.name !== item.id ? item.name : undefined) ?? meta?.name ?? id
-
-    const model: EnrichedModel = {
-      name: displayName,
-      limit: {
-        context: epContext ?? meta?.limit.context ?? 128_000,
-        input: meta?.limit.input,
-        output: epOutput ?? meta?.limit.output ?? 4096,
-      },
-      modalities: meta?.modalities ?? { input: ["text"], output: ["text"] },
-    }
-
-    // Capabilities: prefer models.dev when available, fall back to endpoint-detected
-    if (meta) {
-      model.reasoning = caps.reasoning || meta.reasoning
-      model.temperature = caps.temperature || meta.temperature
-      model.tool_call = caps.toolCall || meta.tool_call
-      model.attachment = meta.attachment
-      model.family = meta.family
-      model.release_date = meta.release_date
-      model.status = meta.status
-      model.cost = {
-        input: meta.cost?.input ?? 0,
-        output: meta.cost?.output ?? 0,
-        cache_read: meta.cost?.cache_read,
-        cache_write: meta.cost?.cache_write,
-      }
-    } else {
-      // No models.dev match — use whatever the endpoint told us, with safe defaults.
-      // tool_call defaults to false for unknown models to avoid sending tool calls
-      // to endpoints that don't support them.
-      if (caps.reasoning) model.reasoning = true
-      if (caps.temperature) model.temperature = true
-      if (caps.toolCall) model.tool_call = true
-
-      if (typeof item.input_cost === "number" || typeof item.output_cost === "number") {
-        model.cost = {
-          input: typeof item.input_cost === "number" ? item.input_cost : 0,
-          output: typeof item.output_cost === "number" ? item.output_cost : 0,
-        }
-      }
-    }
-
-    // Strip false/undefined booleans so OpenCode's fallback chain works cleanly
-    if (!model.reasoning) delete model.reasoning
-    if (!model.temperature) delete model.temperature
-    if (!model.attachment) delete model.attachment
-    if (model.family === undefined) delete model.family
-    if (model.release_date === undefined) delete model.release_date
-    if (model.status === undefined) delete model.status
-
-    const override = options.overrides?.[id]
-    if (override) {
-      if (typeof override.context === "number") model.limit.context = override.context
-      if (typeof override.output === "number") model.limit.output = override.output
-    }
-
-    result[id] = model
-  }
-
-  return result
+export function endpointContextWindow(item: EndpointModel): number | undefined {
+  const v = item.context_length ?? item.context_window ?? item.max_model_len
+  return typeof v === "number" && v > 0 ? v : undefined
 }
 
+function endpointMaxOutput(item: EndpointModel): number | undefined {
+  const v = item.max_completion_tokens ?? item.max_output_tokens
+  return typeof v === "number" && v > 0 ? v : undefined
+}
+
+/** Whether the entry describes itself beyond the bare OpenAI fields, so an absent capability means "no". */
+function selfDescribing(item: EndpointModel): boolean {
+  return Boolean(item.architecture || item.capabilities || item.supported_parameters || item.meta)
+}
+
+function endpointTools(item: EndpointModel): boolean {
+  return (
+    item.capabilities?.function_calling === true ||
+    item.capabilities?.tool_choice === true ||
+    item.capabilities?.tools === true ||
+    Boolean(item.supported_parameters?.includes("tools"))
+  )
+}
+
+function endpointVision(item: EndpointModel): boolean {
+  return item.capabilities?.vision === true || Boolean(item.architecture?.input_modalities?.includes("image"))
+}
+
+const DEFAULT_CONTEXT = 128_000
+const DEFAULT_OUTPUT = 32_000
+
 /**
- * Best-effort context-window detection for a single model: what the endpoint
- * reports (if anything) and what models.dev knows. Many self-hosted backends
- * (e.g. llama-swap) don't report context in /v1/models, so both may be undefined.
+ * Enrich a provider's raw /models entries into catalog models: chat models only,
+ * endpoint-reported values first, then models.dev, then defaults. Filter and
+ * overrides come from the plugin's per-provider settings.
  */
-export async function detectContextWindow(
-  baseURL: string,
-  apiKey: string | undefined,
-  modelId: string,
-): Promise<{ endpoint?: number; modelsDev?: number }> {
-  let endpoint: number | undefined
-  try {
-    const models = await fetchEndpointModels(baseURL, apiKey)
-    const item = models.find((m) => sanitizeModelId(m.id) === modelId || m.id === modelId)
-    if (item) endpoint = endpointContextWindow(item)
-  } catch {
-    // ignore — detection is best-effort
+export async function enrichModels(
+  raw: readonly EndpointModel[],
+  options: { displayStyle?: DisplayStyle; filter?: ModelFilter; overrides?: Record<string, ModelOverride> } = {},
+): Promise<DiscoveredModel[]> {
+  const lookup = await getLookupMap()
+  const seen = new Set<string>()
+  const result: DiscoveredModel[] = []
+
+  for (const item of raw) {
+    if (!isChatModel(item)) continue
+    const id = sanitizeModelId(item.id)
+    if (seen.has(id) || !modelPassesFilter(id, options.filter)) continue
+    seen.add(id)
+    const meta = lookup.get(normalizeModelId(id))
+
+    const name =
+      options.displayStyle === "name"
+        ? ((item.name && item.name !== item.id ? item.name : undefined) ?? meta?.name ?? id)
+        : id
+
+    const context = endpointContextWindow(item) ?? meta?.limit.context ?? DEFAULT_CONTEXT
+    const output = endpointMaxOutput(item) ?? meta?.limit.output ?? Math.min(DEFAULT_OUTPUT, Math.floor(context / 2))
+
+    const model: DiscoveredModel = {
+      id,
+      name,
+      family: item.meta?.llamaswap?.family ?? meta?.family,
+      // A self-describing endpoint (llama-swap, OpenRouter) omits tools when the
+      // model has none; a bare one (oMLX, plain vLLM) says nothing, so fall back
+      // to models.dev and then to opencode's own default of tools on.
+      tools: selfDescribing(item) ? endpointTools(item) : (meta?.tool_call ?? true),
+      vision: endpointVision(item) || Boolean(meta?.attachment && meta.modalities?.input.includes("image")),
+      context,
+      output,
+    }
+
+    const override = options.overrides?.[id]
+    if (typeof override?.context === "number") model.context = override.context
+    if (typeof override?.output === "number") model.output = override.output
+
+    result.push(model)
   }
-  let modelsDev: number | undefined
+
+  return result.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** What models.dev knows about a model's context window, if anything. */
+export async function modelsDevContextWindow(modelId: string): Promise<number | undefined> {
   try {
-    const lookup = await getLookupMap()
-    modelsDev = lookup.get(normalizeModelId(modelId))?.limit.context
+    return (await getLookupMap()).get(normalizeModelId(modelId))?.limit.context
   } catch {
-    // ignore
+    return undefined
   }
-  return { endpoint, modelsDev }
 }

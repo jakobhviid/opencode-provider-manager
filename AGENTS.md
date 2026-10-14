@@ -17,11 +17,23 @@ Guidance for AI coding agents working in this repository.
 ## Project notes
 
 - Fork of [b3nw/opencode-dynamic-custom-providers](https://github.com/b3nw/opencode-dynamic-custom-providers) (MIT).
-- **Provider persistence must target opencode's GLOBAL config file** — see
-  `src/opencode-config.ts`. Do NOT use `client.config.update` for durable
-  persistence: it writes `<cwd>/config.json`, which opencode never loads.
-- Credentials are removed directly from the auth store (`src/opencode-config.ts`
-  `removeCredential`) because the SDK exposes no generic credential-delete.
+- Targets the opencode 2 plugin API. `@opencode/plugin` is a dev dependency for
+  types only; the plugin imports nothing from it at runtime, and opencode
+  supplies the context. Read the API from the opencode source at the matching
+  tag (`packages/plugin/src`, and `packages/core/src/plugin/provider/local.ts`
+  for the discovery pattern this plugin follows).
+- opencode resolves a local plugin directory to `<dir>/server.js` and
+  `<dir>/tui.js` (not `package.json` exports); the root files re-export `dist/`.
+- Discovery is a **model** transform, not a provider transform: external
+  provider transforms run before opencode's config-provider transform and
+  can't see configured providers. Transforms are synchronous, so fetching
+  happens outside them and `ctx.model.reload()` applies the result.
+- The TUI half only shows dialogs; it calls the server half over plugin RPC
+  (`src/rpc.ts`). RPC outputs must be strict JSON (no `undefined` values).
+- TUI commands register in the `"global"` keymap mode; the default mode isn't
+  active while the prompt has focus, so slash completion wouldn't list them.
+- Config writes target opencode's GLOBAL config file (`src/opencode-config.ts`),
+  comment-preserving; opencode watches it and reloads on change.
 
 ## Repository layout
 
@@ -44,14 +56,11 @@ Guidance for AI coding agents working in this repository.
   `auto/formula-opencode-provider-manager` branch of `jakobhviid/homebrew-tap`
   (via the `TAP_DEPLOY_KEY` deploy-key secret); the tap's gate installs and
   tests it there and lands it on `main` only if it passes.
-- **Plugin packaging** (verified against real opencode): ship tsc `dist/` +
-  `package.json` + a `node_modules` pruned to the runtime closure
-  (`@opencode-ai/plugin` + `zod` + `jsonc-parser`, ~6 MB). Do NOT bundle (esbuild
-  ESM breaks on a dynamic `require` in the deps) and do NOT ship the full
-  `npm install` (~124 MB of SDK deps the plugin never imports). `ci/stage-plugin.sh`
-  derives the closure via an esbuild metafile and smoke-imports both entrypoints.
-- opencode loads a path plugin from the `plugin` array using the plugin's own
-  `node_modules`; it does not inject `@opencode-ai/plugin` into resolution.
+- **Plugin packaging** (verified against real opencode): ship `server.js`,
+  `tui.js`, tsc `dist/`, `package.json`, and a `node_modules` pruned to the
+  runtime closure (`jsonc-parser`). Do NOT ship the full `npm install` (~200 MB
+  of type-only dev deps). `ci/stage-plugin.sh` derives the closure via an
+  esbuild metafile and smoke-imports both entrypoints.
 
 computes and stamps it.
 

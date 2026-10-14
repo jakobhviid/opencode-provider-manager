@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-10-14
+
+### Changed
+- Ported to the opencode 2 plugin API (`@opencode/plugin`); requires opencode 2. opencode 2 resolves a local plugin directory to `<dir>/server.js` and `<dir>/tui.js` and requires a default export of `{ id, setup }`, so the 2.x package was silently skipped and dynamic providers came up with no models.
+- Discovery runs as a model transform and keeps running: models are re-fetched every 60 seconds and applied live, the last good list survives outages, and a disk cache makes them available at startup.
+- Only chat models are listed; embedding, reranker, speech, transcription, and image models are skipped based on what the endpoint reports.
+- Capabilities and context come from the endpoint first (`capabilities`, `supported_parameters`, `architecture`, `context_length`/`max_model_len`), then models.dev. Models on endpoints that report nothing default to tools on, matching opencode.
+- All TUI commands are prefixed `pm-`: `/pm-providers`, `/pm-reload-models`, `/pm-add-provider`, `/pm-edit-provider`, `/pm-remove-provider`, `/pm-toggle-provider`, `/pm-set-model-filter`, `/pm-override-model`, `/pm-set-default-model`.
+- The TUI half is UI only; discovery and config writes run in the server plugin and are reached over plugin RPC.
+- `/pm-add-provider` and `/pm-remove-provider` handle both the legacy `provider` and native `providers` config sections; adding over an existing provider edits its address and key in place.
+- The display style is a per-provider plugin setting (opencode strips unknown provider keys such as `displayStyle`).
+- The runtime dependency closure is `jsonc-parser` alone (360 KB staged, from ~6 MB).
+
+### Removed
+- `/add-provider-auth` and `/remove-provider-auth` — opencode's `/connect` and `opencode auth logout` manage keys, and discovery reads keys stored that way.
+- `/test-provider` — `/pm-providers` shows each provider's model count, last check, and last error.
+- `/toggle-auto-reload` and the `SIGUSR2` reload — opencode watches its config and the plugin applies its own changes live.
+- The `/refresh-models` alias, and the agent tools that duplicated the TUI commands.
+- The `dynamic: true` provider flag, which opencode 2 strips from config. A provider is discovered when it declares no models.
+
 ## [2.7.1] - 2026-07-28
 
 ### Changed

@@ -1,377 +1,377 @@
-import type { Plugin } from "@opencode-ai/plugin"
-import { tool } from "@opencode-ai/plugin"
-import { discoverAndEnrich, fetchEndpointModels } from "./discovery.js"
-import { sanitizeErrorMessage, sanitizeUrl } from "./security.js"
-import { reloadAllProviders, addProvider, validateAddProviderParams, persistProviderApiKey } from "./commands.js"
-import { upsertProvider, removeProvider, removeCredential, setDefaultModel, listCredentialIds, getStoredCredential } from "./opencode-config.js"
-import { getProviderSettings, setDisabled, setFilter, setModelOverride, removeProviderSettings } from "./settings.js"
-import { shouldDiscover, getApiKey, type ProviderConfig, type OpenCodeConfig } from "./types.js"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
+import type { Plugin } from "@opencode/plugin"
+import {
+  clearModelsDevCache,
+  endpointContextWindow,
+  enrichModels,
+  fetchEndpointModels,
+  isChatModel,
+  modelsDevContextWindow,
+  type DiscoveredModel,
+  type EndpointModel,
+} from "./discovery.js"
+import { isValidUrl, sanitizeErrorMessage, sanitizeModelId } from "./security.js"
+import { hasProvider, removeProvider, setDefaultModel, setProviderBaseURL, upsertProvider } from "./opencode-config.js"
+import {
+  getProviderSettings,
+  removeProviderSettings,
+  setDisabled,
+  setDisplayStyle,
+  setFilter,
+  setModelOverride,
+} from "./settings.js"
+import { ProviderManagerRpc, type Api, type KeySource, type ProviderStatus } from "./rpc.js"
 
 export const id = "opencode-provider-manager"
 
-export type { ProviderConfig, OpenCodeConfig } from "./types.js"
-export { getApiKey } from "./types.js"
+const REFRESH_INTERVAL = 60_000
 
-export const server: Plugin = async ({ client }) => {
-  await client.app.log({
-    body: {
-      level: "info",
-      message: "Plugin initialized",
-      service: id,
-    },
-  })
+/** A provider this plugin discovers models for: OpenAI-compatible, with a baseURL and no configured models. */
+interface Target {
+  id: string
+  name: string
+  baseURL: string
+  apiKey?: string
+  keySource: KeySource
+}
 
-  return {
-    config: async (cfg: OpenCodeConfig) => {
-      if (!cfg.provider) return
+/** The last discovery result for a provider. Kept through outages so models don't flicker away. */
+interface Inventory {
+  baseURL: string
+  raw: EndpointModel[]
+  models: DiscoveredModel[]
+  checked: number
+  error?: string
+}
 
-      for (const [providerId, providerConfig] of Object.entries(cfg.provider)) {
-        if (!shouldDiscover(providerConfig)) continue
+// Shared by every plugin instance in the process (opencode runs one per
+// location), and persisted so a restart shows the last-known models before the
+// first fetch returns.
+const INVENTORY_FILE = path.join(os.homedir() || "/tmp", ".cache", "opencode-provider-manager", "inventory.json")
+const inventories = new Map<string, Inventory>(loadInventories())
+const inflight = new Map<string, Promise<void>>()
 
-        const settings = getProviderSettings(providerId)
-        if (settings.disabled) continue
-
-        const baseURL = providerConfig.options!.baseURL!
-        const apiKey = getApiKey(providerConfig, providerId) ?? getStoredCredential(providerId)
-
-        try {
-          await client.app.log({
-            body: {
-              level: "info",
-              message: `Discovering models from ${providerId} at ${sanitizeUrl(baseURL)}`,
-              service: id,
-            },
-          })
-
-          const displayStyle = providerConfig.displayStyle ?? "slug"
-          const models = await discoverAndEnrich(baseURL, apiKey, displayStyle, {
-            filter: settings.filter,
-            overrides: settings.overrides,
-          })
-          const count = Object.keys(models).length
-
-          if (count === 0) {
-            await client.app.log({
-              body: {
-                level: "warn",
-                message: `No models discovered from ${providerId}`,
-                service: id,
-              },
-            })
-            continue
-          }
-
-          providerConfig.models = { ...(providerConfig.models as Record<string, unknown> ?? {}), ...models }
-          providerConfig.npm = providerConfig.npm ?? "@ai-sdk/openai-compatible"
-          providerConfig.api = providerConfig.api ?? baseURL
-
-          await client.app.log({
-            body: {
-              level: "info",
-              message: `Discovered ${count} model(s) from ${providerId}`,
-              service: id,
-            },
-          })
-        } catch (error) {
-          await client.app.log({
-            body: {
-              level: "warn",
-              message: `Failed to discover models from ${providerId}: ${sanitizeErrorMessage(error)}`,
-              service: id,
-            },
-          })
-        }
-      }
-    },
-
-    tool: {
-      "refresh-models": tool({
-        description:
-          "Re-discover models from all dynamic providers and update the live config. " +
-          "Clears the models.dev metadata cache, fetches /models from every provider " +
-          "with a baseURL, enriches them, and persists the updated config.",
-        args: {},
-        async execute() {
-          const { data: config } = await client.config.get()
-          const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
-
-          const result = await reloadAllProviders(providers)
-
-          if (result.providerCount === 0) {
-            return "No dynamic providers configured. Add a provider with a baseURL first."
-          }
-
-          // Intentionally NOT calling client.config.update — it writes an unloaded
-          // <cwd>/config.json. Discovery re-runs on every opencode launch, so the
-          // refreshed models + fresh models.dev metadata apply on the next restart.
-          const lines: string[] = []
-          if (result.failures === 0) {
-            lines.push(
-              `Re-discovered ${result.totalModels} model(s) from ${result.providerCount} provider(s); metadata cache cleared. Restart opencode to apply.`,
-            )
-          } else {
-            lines.push(
-              `Re-discovered ${result.totalModels} model(s) with ${result.failures} failure(s). Restart opencode to apply.`,
-            )
-          }
-          for (const w of result.warnings) lines.push(`Warning: ${w}`)
-          for (const e of result.errors) lines.push(`Error: ${e}`)
-
-          return lines.join("\n")
-        },
-      }),
-
-      "add-provider": tool({
-        description:
-          "Add a new OpenAI-compatible provider with dynamic model discovery. " +
-          "Validates the endpoint, discovers available models, enriches them with " +
-          "models.dev metadata, and persists the provider to the config.",
-        args: {
-          providerId: tool.schema
-            .string()
-            .describe("Unique provider ID (alphanumeric, hyphens, underscores only)"),
-          baseURL: tool.schema
-            .string()
-            .describe("Base URL of the OpenAI-compatible API endpoint (e.g. https://api.example.com/v1)"),
-          apiKey: tool.schema
-            .string()
-            .optional()
-            .describe("API key for authentication (optional)"),
-          displayStyle: tool.schema
-            .enum(["slug", "name"])
-            .optional()
-            .describe("How to display model names: 'slug' for full ID (default), 'name' for friendly name"),
-          overwrite: tool.schema
-            .boolean()
-            .optional()
-            .describe("Overwrite if a provider with this ID already exists (default: false)"),
-        },
-        async execute(args) {
-          const { data: config } = await client.config.get()
-          const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
-
-          const validationError = validateAddProviderParams(args, providers)
-          if (validationError) return validationError
-
-          const result = await addProvider(args)
-          if (!result.success || !result.providerEntry) return result.message
-
-          // On overwrite, keep the existing provider's custom options (headers, etc.)
-          // but not its baseURL (replaced) or in-config apiKey (would shadow the auth store).
-          if (args.overwrite && providers[args.providerId]?.options) {
-            const { apiKey: _k, baseURL: _b, ...keep } = providers[args.providerId].options as Record<string, unknown>
-            result.providerEntry.options = { ...keep, ...(result.providerEntry.options ?? {}) }
-          }
-
-          await persistProviderApiKey(
-            result.providerEntry,
-            args.providerId,
-            args.apiKey,
-            async (id, key) => {
-              await client.auth.set({ path: { id }, body: { type: "api", key } })
-              return true
-            },
-          )
-
-          // Persist to the global config file opencode actually loads. (Works
-          // around client.config.update writing an unloaded <cwd>/config.json.)
-          const configFile = upsertProvider(args.providerId, result.providerEntry)
-
-          return `${result.message} Persisted to ${configFile}. Restart opencode to use it.`
-        },
-      }),
-
-      "remove-provider": tool({
-        description:
-          "Remove a custom provider from the opencode config and delete its stored credential.",
-        args: {
-          providerId: tool.schema.string().describe("ID of the provider to remove"),
-        },
-        async execute(args) {
-          const { file, existed } = removeProvider(args.providerId)
-          const credentialRemoved = removeCredential(args.providerId)
-          removeProviderSettings(args.providerId)
-          if (!existed) {
-            return (
-              `Provider '${args.providerId}' not found in ${file}.` +
-              (credentialRemoved ? " Removed a stray credential." : "")
-            )
-          }
-          return (
-            `Removed provider '${args.providerId}'` +
-            (credentialRemoved ? " and its stored credential" : "") +
-            ` from ${file}. Restart opencode to apply.`
-          )
-        },
-      }),
-
-      "add-provider-auth": tool({
-        description:
-          "Set (or replace) the API key for an existing provider. Stores the key in opencode's auth store.",
-        args: {
-          providerId: tool.schema.string().describe("ID of an existing provider"),
-          apiKey: tool.schema.string().describe("API key to store for the provider"),
-        },
-        async execute(args) {
-          try {
-            await client.auth.set({ path: { id: args.providerId }, body: { type: "api", key: args.apiKey } })
-          } catch (error) {
-            return `Failed to store the API key for '${args.providerId}': ${sanitizeErrorMessage(error)}`
-          }
-          return `Stored API key for '${args.providerId}'. Run refresh-models or restart to use it.`
-        },
-      }),
-
-      "remove-provider-auth": tool({
-        description:
-          "Delete the stored API key for a provider without removing the provider itself.",
-        args: {
-          providerId: tool.schema.string().describe("ID of the provider whose stored key should be removed"),
-        },
-        async execute(args) {
-          const removed = removeCredential(args.providerId)
-          return removed
-            ? `Removed the stored API key for '${args.providerId}'. Restart opencode to apply.`
-            : `No stored API key found for '${args.providerId}'.`
-        },
-      }),
-
-      "list-providers": tool({
-        description:
-          "List configured providers with base URL, where the API key comes from, disabled state, " +
-          "and any model filter/overrides. Does not run discovery.",
-        args: {},
-        async execute() {
-          const { data: config } = await client.config.get()
-          const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
-          const ids = Object.keys(providers)
-          if (ids.length === 0) return "No providers configured."
-          const credentialed = new Set(listCredentialIds())
-          return ids
-            .map((pid) => {
-              const p = providers[pid]
-              const s = getProviderSettings(pid)
-              const envKey = `OPENCODE_LOCAL_${pid.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`
-              const keySrc = p.options?.apiKey
-                ? "config"
-                : credentialed.has(pid)
-                  ? "auth store"
-                  : process.env[envKey]
-                    ? "env"
-                    : "none"
-              const bits = [`baseURL=${p.options?.baseURL ?? "-"}`, `key=${keySrc}`]
-              if (s.disabled) bits.push("DISABLED")
-              if (s.filter?.include?.length) bits.push(`include=[${s.filter.include.join(",")}]`)
-              if (s.filter?.exclude?.length) bits.push(`exclude=[${s.filter.exclude.join(",")}]`)
-              if (s.overrides && Object.keys(s.overrides).length)
-                bits.push(`overrides=${Object.keys(s.overrides).length}`)
-              return `- ${pid}: ${bits.join(", ")}`
-            })
-            .join("\n")
-        },
-      }),
-
-      "test-provider": tool({
-        description:
-          "Test a provider's endpoint by fetching /v1/models and reporting how many models it returns (or the error).",
-        args: {
-          providerId: tool.schema.string().describe("ID of the provider to test"),
-        },
-        async execute(args) {
-          const { data: config } = await client.config.get()
-          const providers = (config?.provider as Record<string, ProviderConfig>) ?? {}
-          const p = providers[args.providerId]
-          if (!p?.options?.baseURL) return `Provider '${args.providerId}' not found or has no baseURL.`
-          const apiKey = getApiKey(p, args.providerId) ?? getStoredCredential(args.providerId)
-          try {
-            const models = await fetchEndpointModels(p.options.baseURL, apiKey)
-            return `OK — '${args.providerId}' returned ${models.length} model(s) from ${sanitizeUrl(p.options.baseURL)}.`
-          } catch (error) {
-            return `FAILED — '${args.providerId}': ${sanitizeErrorMessage(error)}`
-          }
-        },
-      }),
-
-      "set-default-model": tool({
-        description: "Set opencode's default model (the `model` field) to a 'providerID/modelID' reference.",
-        args: {
-          model: tool.schema
-            .string()
-            .describe("Default model as 'providerID/modelID', e.g. nous/qwen3-coder-next-q4"),
-        },
-        async execute(args) {
-          const file = setDefaultModel(args.model)
-          return `Set default model to '${args.model}' in ${file}. Restart opencode to apply.`
-        },
-      }),
-
-      "toggle-provider": tool({
-        description: "Enable or disable a provider's model discovery without removing it.",
-        args: {
-          providerId: tool.schema.string().describe("ID of the provider"),
-          disabled: tool.schema.boolean().describe("true to disable discovery, false to enable"),
-        },
-        async execute(args) {
-          setDisabled(args.providerId, args.disabled)
-          return `Provider '${args.providerId}' ${args.disabled ? "disabled" : "enabled"}. Restart opencode to apply.`
-        },
-      }),
-
-      "set-model-filter": tool({
-        description:
-          "Restrict which of a provider's models are discovered, via include/exclude patterns " +
-          "(case-insensitive regex). Omit both to clear the filter.",
-        args: {
-          providerId: tool.schema.string().describe("ID of the provider"),
-          include: tool.schema
-            .string()
-            .array()
-            .optional()
-            .describe("Only keep models whose id matches one of these patterns"),
-          exclude: tool.schema
-            .string()
-            .array()
-            .optional()
-            .describe("Drop models whose id matches one of these patterns"),
-        },
-        async execute(args) {
-          const filter =
-            args.include?.length || args.exclude?.length
-              ? { include: args.include, exclude: args.exclude }
-              : undefined
-          setFilter(args.providerId, filter)
-          return filter
-            ? `Filter set for '${args.providerId}'. Restart opencode to apply.`
-            : `Filter cleared for '${args.providerId}'. Restart opencode to apply.`
-        },
-      }),
-
-      "override-model": tool({
-        description:
-          "Override a model's metadata (context window and/or max output tokens) for a provider — " +
-          "useful when models.dev doesn't know a self-hosted model. Omit both to clear the override.",
-        args: {
-          providerId: tool.schema.string().describe("ID of the provider"),
-          modelId: tool.schema.string().describe("The model id as it appears in the provider, e.g. qwen3.6-35b"),
-          context: tool.schema.number().optional().describe("Context window in tokens"),
-          output: tool.schema.number().optional().describe("Max output tokens"),
-        },
-        async execute(args) {
-          const clearing = args.context === undefined && args.output === undefined
-          // Only pass the fields the caller specified, so a partial call (e.g. output
-          // only) doesn't clobber a previously-set context. Both omitted => clear.
-          setModelOverride(args.providerId, args.modelId, {
-            ...(args.context !== undefined ? { context: args.context } : {}),
-            ...(args.output !== undefined ? { output: args.output } : {}),
-            ...(clearing ? { context: undefined, output: undefined } : {}),
-          })
-          return clearing
-            ? `Cleared override for '${args.providerId}/${args.modelId}'. Restart opencode to apply.`
-            : `Override set for '${args.providerId}/${args.modelId}'. Restart opencode to apply.`
-        },
-      }),
-    },
+function loadInventories(): Array<[string, Inventory]> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(INVENTORY_FILE, "utf8")) as Record<string, Inventory>
+    return Object.entries(parsed).map(([id, inv]) => [id, { ...inv, checked: 0, error: undefined }])
+  } catch {
+    return []
   }
 }
 
-export default { id, server }
+function saveInventories(): void {
+  try {
+    fs.mkdirSync(path.dirname(INVENTORY_FILE), { mode: 0o700, recursive: true })
+    const data = Object.fromEntries(
+      [...inventories].map(([id, inv]) => [id, { baseURL: inv.baseURL, raw: inv.raw, models: inv.models }]),
+    )
+    fs.writeFileSync(INVENTORY_FILE, JSON.stringify(data), { mode: 0o600 })
+  } catch {
+    // the cache is an optimisation; discovery still works without it
+  }
+}
+
+function envKey(providerId: string): string | undefined {
+  return process.env[`OPENCODE_LOCAL_${providerId.toUpperCase().replaceAll(/[^A-Z0-9]/g, "_")}_API_KEY`]
+}
+
+/** Discovery runs for OpenAI-compatible providers that declare a baseURL and no models of their own. */
+function eligible(record: {
+  provider: { id: string; name: string; package: string; settings?: Record<string, unknown> }
+  models: ReadonlyMap<string, unknown>
+}): Target | undefined {
+  if (!record.provider.package.includes("openai-compatible")) return undefined
+  if (record.models.size > 0) return undefined
+  const baseURL = record.provider.settings?.baseURL
+  if (typeof baseURL !== "string" || !isValidUrl(baseURL)) return undefined
+  const configured = record.provider.settings?.apiKey
+  const apiKey = typeof configured === "string" && configured ? configured : envKey(record.provider.id)
+  return {
+    id: record.provider.id,
+    name: record.provider.name,
+    baseURL: baseURL.replace(/\/+$/, ""),
+    apiKey,
+    keySource: typeof configured === "string" && configured ? "config" : apiKey ? "env" : "none",
+  }
+}
+
+async function enrichFor(providerId: string, raw: readonly EndpointModel[]): Promise<DiscoveredModel[]> {
+  const settings = getProviderSettings(providerId)
+  return enrichModels(raw, {
+    displayStyle: settings.displayStyle,
+    filter: settings.filter,
+    overrides: settings.overrides,
+  })
+}
+
+/** Fetch one provider's models, at most once at a time per provider across all plugin instances. */
+function discover(target: Target, apiKey: string | undefined): Promise<void> {
+  const running = inflight.get(target.id)
+  if (running) return running
+  const run = (async () => {
+    const previous = inventories.get(target.id)
+    try {
+      const raw = await fetchEndpointModels(target.baseURL, apiKey)
+      const models = await enrichFor(target.id, raw)
+      inventories.set(target.id, { baseURL: target.baseURL, raw, models, checked: Date.now() })
+    } catch (error) {
+      const message = sanitizeErrorMessage(error)
+      const kept = previous?.baseURL === target.baseURL ? previous : undefined
+      inventories.set(target.id, {
+        baseURL: target.baseURL,
+        raw: kept?.raw ?? [],
+        models: kept?.models ?? [],
+        checked: Date.now(),
+        error: message,
+      })
+    }
+    saveInventories()
+  })().finally(() => inflight.delete(target.id))
+  inflight.set(target.id, run)
+  return run
+}
+
+function fingerprint(inv: Inventory | undefined): string {
+  return JSON.stringify([inv?.baseURL, inv?.models])
+}
+
+const server: Plugin.Plugin["setup"] = async (ctx) => {
+  const rpc = ctx.rpc
+  let targets = new Map<string, Target>()
+  // What this instance last put into its provider catalog, so it reloads only on change.
+  const applied = new Map<string, string>()
+  // Keys from opencode's own credential store (/connect), resolved per refresh.
+  const connectionKeys = new Map<string, string>()
+
+  async function resolveKey(target: Target): Promise<string | undefined> {
+    if (target.apiKey) return target.apiKey
+    try {
+      const connection = await ctx.integration.connection.active(target.id)
+      const credential = connection ? await ctx.integration.connection.resolve(connection) : undefined
+      if (credential?.type === "key") {
+        connectionKeys.set(target.id, credential.key)
+        return credential.key
+      }
+    } catch {
+      // no integration for this provider — discover without a key
+    }
+    connectionKeys.delete(target.id)
+    return undefined
+  }
+
+  let chain: Promise<void> = Promise.resolve()
+  /** Re-discover stale (or, when forced, all) providers, then reload the catalog if anything changed. */
+  function refresh(force = false): Promise<void> {
+    chain = chain.then(async () => {
+      const due = [...targets.values()].filter((target) => {
+        if (getProviderSettings(target.id).disabled) return false
+        const inv = inventories.get(target.id)
+        return force || !inv || inv.baseURL !== target.baseURL || Date.now() - inv.checked >= REFRESH_INTERVAL
+      })
+      await Promise.all(due.map(async (target) => discover(target, await resolveKey(target))))
+      const changed = [...targets.keys()].some((id) => applied.get(id) !== fingerprint(inventories.get(id)))
+      if (changed) await ctx.model.reload()
+    })
+    return chain.catch(() => {})
+  }
+
+  // A model transform, not a provider transform: it runs after every provider
+  // source (including the config's own) has resolved, so configured providers
+  // are visible here, and it can add models to any available provider.
+  await ctx.model.transform((editor) => {
+    const next = new Map<string, Target>()
+    for (const record of editor.provider.list()) {
+      const target = eligible(record)
+      if (!target) continue
+      next.set(target.id, target)
+      const inv = inventories.get(target.id)
+      applied.set(target.id, fingerprint(inv))
+      if (!inv || inv.baseURL !== target.baseURL || getProviderSettings(target.id).disabled) continue
+      for (const found of inv.models) {
+        editor.update(target.id, found.id, (model) => {
+          model.name = found.name
+          if (found.family) model.family = found.family as unknown as typeof model.family
+          model.capabilities = {
+            tools: found.tools,
+            input: found.vision ? ["text", "image"] : ["text"],
+            output: ["text"],
+          }
+          model.limit = { context: found.context, output: found.output }
+        })
+      }
+    }
+    const added = [...next.keys()].some((id) => targets.get(id)?.baseURL !== next.get(id)?.baseURL)
+    targets = next
+    // Transforms are synchronous; discovery for new or re-pointed providers runs after.
+    if (added) queueMicrotask(() => void refresh())
+  })
+
+  const timer = setInterval(() => void refresh(), REFRESH_INTERVAL)
+  void refresh()
+
+  /** Re-enrich a provider from its cached /models response after a settings change, then reload. */
+  async function reenrich(providerId: string): Promise<void> {
+    const inv = inventories.get(providerId)
+    if (inv) {
+      inventories.set(providerId, { ...inv, models: await enrichFor(providerId, inv.raw) })
+      saveInventories()
+    }
+    await ctx.model.reload()
+    await refresh()
+  }
+
+  const keySource = (target: Target): KeySource =>
+    target.keySource === "none" && connectionKeys.has(target.id) ? "connection" : target.keySource
+
+  const handlers: { [Name in keyof Api]: (input: any) => Promise<object> } = {
+    async list() {
+      const providers: ProviderStatus[] = [...targets.values()].map((target) => {
+        const settings = getProviderSettings(target.id)
+        const inv = inventories.get(target.id)
+        return {
+          id: target.id,
+          name: target.name,
+          baseURL: target.baseURL,
+          keySource: keySource(target),
+          editable: hasProvider(target.id),
+          disabled: Boolean(settings.disabled),
+          displayStyle: settings.displayStyle ?? "slug",
+          filter: settings.filter,
+          overrides: Object.keys(settings.overrides ?? {}),
+          models: inv?.baseURL === target.baseURL ? inv.models.length : 0,
+          checked: inv?.checked || undefined,
+          error: inv?.error,
+        }
+      })
+      return { providers: providers.sort((a, b) => a.id.localeCompare(b.id)) }
+    },
+
+    async refresh() {
+      clearModelsDevCache()
+      await refresh(true)
+      const all = [...targets.values()].filter((t) => !getProviderSettings(t.id).disabled)
+      const failed = all.filter((t) => inventories.get(t.id)?.error)
+      const models = all.reduce((sum, t) => sum + (inventories.get(t.id)?.models.length ?? 0), 0)
+      if (all.length === 0) return { ok: false, message: "No providers to discover. Add one with /pm-add-provider." }
+      if (failed.length === 0) return { ok: true, message: `Discovered ${models} model(s) from ${all.length} provider(s).` }
+      return {
+        ok: false,
+        message:
+          `Discovered ${models} model(s); ${failed.length} provider(s) failed: ` +
+          failed.map((t) => `${t.id} (${inventories.get(t.id)?.error})`).join("; "),
+      }
+    },
+
+    async add(input: Parameters<Api["add"]>[0]) {
+      const providerId = String(input.providerId ?? "").trim()
+      const baseURL = String(input.baseURL ?? "").trim().replace(/\/+$/, "")
+      const apiKey = input.apiKey?.trim() || undefined
+      if (!/^[a-zA-Z0-9_-]+$/.test(providerId))
+        return { ok: false, message: "Invalid name. Use letters, numbers, hyphens, or underscores only." }
+      if (!isValidUrl(baseURL)) return { ok: false, message: "Invalid address. Enter a full URL, including https://." }
+      if (!input.overwrite && (targets.has(providerId) || hasProvider(providerId)))
+        return { ok: false, message: `A provider called '${providerId}' already exists.` }
+
+      let raw: EndpointModel[]
+      try {
+        raw = await fetchEndpointModels(baseURL, apiKey)
+      } catch (error) {
+        return { ok: false, message: `Couldn't list models at ${baseURL}: ${sanitizeErrorMessage(error)}` }
+      }
+      const chat = raw.filter(isChatModel).length
+      if (chat === 0) return { ok: false, message: `${baseURL} reports no chat models. Provider not added.` }
+
+      setDisplayStyle(providerId, input.displayStyle)
+      // Seed the inventory so the models appear as soon as opencode picks up the config change.
+      inventories.set(providerId, { baseURL, raw, models: await enrichFor(providerId, raw), checked: Date.now() })
+      saveInventories()
+      upsertProvider(providerId, { name: providerId, baseURL, apiKey })
+      return { ok: true, message: `Added '${providerId}' with ${chat} model(s).` }
+    },
+
+    async edit(input: Parameters<Api["edit"]>[0]) {
+      const baseURL = String(input.baseURL ?? "").trim().replace(/\/+$/, "")
+      if (!isValidUrl(baseURL)) return { ok: false, message: "Invalid address. Enter a full URL, including https://." }
+      const file = setProviderBaseURL(input.providerId, baseURL)
+      if (!file) return { ok: false, message: `'${input.providerId}' isn't defined in the global opencode config.` }
+      return { ok: true, message: `Updated '${input.providerId}' to ${baseURL}.` }
+    },
+
+    async remove(input: Parameters<Api["remove"]>[0]) {
+      const { file, existed } = removeProvider(input.providerId)
+      if (!existed) return { ok: false, message: `'${input.providerId}' isn't defined in ${file}.` }
+      removeProviderSettings(input.providerId)
+      inventories.delete(input.providerId)
+      saveInventories()
+      return { ok: true, message: `Removed '${input.providerId}'.` }
+    },
+
+    async models(input: Parameters<Api["models"]>[0]) {
+      const models = inventories.get(input.providerId)?.models ?? []
+      return { models: models.map((m) => ({ id: m.id, name: m.name, context: m.context })) }
+    },
+
+    async toggle(input: Parameters<Api["toggle"]>[0]) {
+      const disabled = !getProviderSettings(input.providerId).disabled
+      setDisabled(input.providerId, disabled)
+      await ctx.model.reload()
+      if (!disabled) await refresh()
+      return { ok: true, message: `'${input.providerId}' ${disabled ? "disabled" : "enabled"}.` }
+    },
+
+    async filter(input: Parameters<Api["filter"]>[0]) {
+      const filter = input.filter?.include?.length || input.filter?.exclude?.length ? input.filter : undefined
+      setFilter(input.providerId, filter)
+      await reenrich(input.providerId)
+      const count = inventories.get(input.providerId)?.models.length ?? 0
+      return {
+        ok: true,
+        message: `${filter ? "Filter saved" : "Filter cleared"} for '${input.providerId}' — ${count} model(s).`,
+      }
+    },
+
+    async override(input: Parameters<Api["override"]>[0]) {
+      const modelId = sanitizeModelId(input.modelId)
+      setModelOverride(input.providerId, modelId, { context: input.context })
+      await reenrich(input.providerId)
+      return {
+        ok: true,
+        message: input.context
+          ? `Set ${input.providerId}/${modelId} context to ${input.context.toLocaleString()}.`
+          : `Cleared the context override for ${input.providerId}/${modelId}.`,
+      }
+    },
+
+    async contextHint(input: Parameters<Api["contextHint"]>[0]) {
+      const item = inventories.get(input.providerId)?.raw.find((m) => sanitizeModelId(m.id) === input.modelId)
+      return {
+        endpoint: item ? endpointContextWindow(item) : undefined,
+        modelsDev: await modelsDevContextWindow(input.modelId),
+      }
+    },
+
+    async defaultModel(input: Parameters<Api["defaultModel"]>[0]) {
+      setDefaultModel(input.model)
+      return { ok: true, message: `Default model set to '${input.model}'.` }
+    },
+  }
+
+  // RPC output must be strict JSON; round-tripping drops the undefined optionals.
+  const json = Object.fromEntries(
+    Object.entries(handlers).map(([name, handler]) => [
+      name,
+      async (input: unknown) => JSON.parse(JSON.stringify(await handler(input ?? {}))),
+    ]),
+  )
+  const registration = await rpc.register(ProviderManagerRpc, json as never)
+
+  return async () => {
+    clearInterval(timer)
+    await registration.dispose()
+  }
+}
+
+export default { id, setup: server } satisfies Plugin.Plugin

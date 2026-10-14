@@ -1,12 +1,14 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { modify, applyEdits, parse as parseJsonc } from "jsonc-parser"
-import type { ProviderConfig } from "./types.js"
+import { modify, applyEdits, parse as parseJsonc, type JSONPath } from "jsonc-parser"
 
 // Comment-preserving edits: jsonc-parser rewrites only the touched span, so the
-// user's hand-authored comments and formatting survive.
+// user's hand-authored comments and formatting survive. opencode watches its
+// config directory and reloads on change, so every write here applies live.
 const FORMATTING = { insertSpaces: true, tabSize: 2, eol: "\n" as const }
+
+const OPENAI_COMPATIBLE = "@ai-sdk/openai-compatible"
 
 /**
  * opencode's global config directory, resolved the same way opencode does:
@@ -19,13 +21,9 @@ function globalConfigDir(): string {
 }
 
 /**
- * The global opencode config file we read/write. Honors an explicit
- * OPENCODE_CONFIG path; otherwise prefers an existing opencode.jsonc /
+ * The global opencode config file this plugin reads and writes. Honors an
+ * explicit OPENCODE_CONFIG path; otherwise prefers an existing opencode.jsonc /
  * opencode.json in the global dir, defaulting to opencode.jsonc.
- *
- * IMPORTANT: this is the file opencode actually loads. The SDK's
- * `client.config.update` writes `<cwd>/config.json`, which opencode never
- * reads back — that is the bug this module works around.
  */
 export function resolveConfigFilePath(): string {
   const override = process.env.OPENCODE_CONFIG
@@ -38,34 +36,71 @@ export function resolveConfigFilePath(): string {
   return jsonc
 }
 
-/** opencode's global auth store: XDG_DATA_HOME (or ~/.local/share) + /opencode/auth.json. */
-export function resolveAuthFilePath(): string {
-  const xdg = process.env.XDG_DATA_HOME
-  const base = xdg && xdg.trim() ? xdg : path.join(os.homedir(), ".local", "share")
-  return path.join(base, "opencode", "auth.json")
-}
-
-function readTextOrEmpty(file: string): string {
+function readText(file: string): string {
   try {
-    return fs.readFileSync(file, "utf8")
+    const text = fs.readFileSync(file, "utf8")
+    return text.trim() === "" ? "{}\n" : text
   } catch {
-    return ""
+    return "{}\n"
   }
 }
 
-/**
- * Insert or replace a provider block in the global opencode config, preserving
- * surrounding comments/formatting. Creates the file and the `provider` map if
- * they don't exist yet. Returns the path written.
- */
-export function upsertProvider(providerId: string, entry: ProviderConfig): string {
-  const file = resolveConfigFilePath()
-  let text = readTextOrEmpty(file)
-  if (text.trim() === "") text = "{}\n"
-  const edits = modify(text, ["provider", providerId], entry, { formattingOptions: FORMATTING })
-  const next = applyEdits(text, edits)
+function edit(text: string, at: JSONPath, value: unknown): string {
+  return applyEdits(text, modify(text, at, value, { formattingOptions: FORMATTING }))
+}
+
+function write(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, next)
+  fs.writeFileSync(file, text)
+}
+
+type Parsed = { provider?: Record<string, unknown>; providers?: Record<string, unknown> } | undefined
+
+/**
+ * Which section defines a provider. opencode reads both the legacy `provider`
+ * map (npm/options) and the native `providers` map (package/settings).
+ */
+function sectionOf(parsed: Parsed, providerId: string): "provider" | "providers" | undefined {
+  if (parsed?.provider && providerId in parsed.provider) return "provider"
+  if (parsed?.providers && providerId in parsed.providers) return "providers"
+  return undefined
+}
+
+/** Whether the global config file defines this provider (as opposed to a project config or plugin). */
+export function hasProvider(providerId: string): boolean {
+  const text = readText(resolveConfigFilePath())
+  return sectionOf(parseJsonc(text) as Parsed, providerId) !== undefined
+}
+
+/**
+ * Add an OpenAI-compatible provider with no `models` block, which is what makes
+ * it eligible for discovery. Written in whichever style the file already uses.
+ * An existing provider keeps its block: only its base URL (and key, if given)
+ * change, so custom headers or settings survive. Returns the path written.
+ */
+export function upsertProvider(providerId: string, entry: { name: string; baseURL: string; apiKey?: string }): string {
+  const file = resolveConfigFilePath()
+  let text = readText(file)
+  const parsed = parseJsonc(text) as Parsed
+  const existing = sectionOf(parsed, providerId)
+  if (existing) {
+    const options = existing === "provider" ? "options" : "settings"
+    text = edit(text, [existing, providerId, options, "baseURL"], entry.baseURL)
+    if (entry.apiKey) text = edit(text, [existing, providerId, options, "apiKey"], entry.apiKey)
+  } else if (!parsed?.provider && parsed?.providers) {
+    text = edit(text, ["providers", providerId], {
+      name: entry.name,
+      package: `aisdk:${OPENAI_COMPATIBLE}`,
+      settings: { baseURL: entry.baseURL, ...(entry.apiKey ? { apiKey: entry.apiKey } : {}) },
+    })
+  } else {
+    text = edit(text, ["provider", providerId], {
+      name: entry.name,
+      npm: OPENAI_COMPATIBLE,
+      options: { baseURL: entry.baseURL, ...(entry.apiKey ? { apiKey: entry.apiKey } : {}) },
+    })
+  }
+  write(file, text)
   return file
 }
 
@@ -75,14 +110,31 @@ export function upsertProvider(providerId: string, entry: ProviderConfig): strin
  */
 export function removeProvider(providerId: string): { file: string; existed: boolean } {
   const file = resolveConfigFilePath()
-  const text = readTextOrEmpty(file)
-  if (text.trim() === "") return { file, existed: false }
-  const parsed = parseJsonc(text) as { provider?: Record<string, unknown> } | undefined
-  const existed = Boolean(parsed?.provider && providerId in parsed.provider)
-  if (!existed) return { file, existed: false }
-  const edits = modify(text, ["provider", providerId], undefined, { formattingOptions: FORMATTING })
-  fs.writeFileSync(file, applyEdits(text, edits))
-  return { file, existed: true }
+  let text = readText(file)
+  const parsed = parseJsonc(text) as Parsed
+  let existed = false
+  for (const section of ["provider", "providers"] as const) {
+    if (!parsed?.[section] || !(providerId in parsed[section]!)) continue
+    text = edit(text, [section, providerId], undefined)
+    existed = true
+  }
+  if (existed) write(file, text)
+  return { file, existed }
+}
+
+/**
+ * Update ONLY a provider's base URL, preserving everything else in its block, so
+ * a discovered model list is never frozen into the file. Returns the path
+ * written, or undefined if the global config doesn't define the provider.
+ */
+export function setProviderBaseURL(providerId: string, baseURL: string): string | undefined {
+  const file = resolveConfigFilePath()
+  const text = readText(file)
+  const section = sectionOf(parseJsonc(text) as Parsed, providerId)
+  if (!section) return undefined
+  const at = section === "provider" ? ["provider", providerId, "options", "baseURL"] : ["providers", providerId, "settings", "baseURL"]
+  write(file, edit(text, at, baseURL))
+  return file
 }
 
 /**
@@ -91,82 +143,6 @@ export function removeProvider(providerId: string): { file: string; existed: boo
  */
 export function setDefaultModel(modelRef: string): string {
   const file = resolveConfigFilePath()
-  let text = readTextOrEmpty(file)
-  if (text.trim() === "") text = "{}\n"
-  const edits = modify(text, ["model"], modelRef, { formattingOptions: FORMATTING })
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, applyEdits(text, edits))
+  write(file, edit(readText(file), ["model"], modelRef))
   return file
-}
-
-/**
- * Surgically update ONLY a provider's base URL in the global config, preserving
- * everything else. Crucially this does NOT rewrite the provider block from a
- * runtime object, so it never freezes the discovered `models` (or a stale `api`)
- * into the file. Returns the path written.
- */
-export function setProviderBaseURL(providerId: string, baseURL: string): string {
-  const file = resolveConfigFilePath()
-  let text = readTextOrEmpty(file)
-  if (text.trim() === "") text = "{}\n"
-  const edits = modify(text, ["provider", providerId, "options", "baseURL"], baseURL, {
-    formattingOptions: FORMATTING,
-  })
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, applyEdits(text, edits))
-  return file
-}
-
-/**
- * Remove a stored credential from opencode's auth store. The SDK exposes no
- * generic credential delete, so we edit auth.json directly. No-op if the store
- * or key is absent (e.g. a non-file backend). Returns whether a key was removed.
- */
-export function removeCredential(providerId: string): boolean {
-  const file = resolveAuthFilePath()
-  let store: Record<string, unknown>
-  try {
-    store = JSON.parse(fs.readFileSync(file, "utf8"))
-  } catch {
-    return false
-  }
-  if (!store || typeof store !== "object" || !(providerId in store)) return false
-  delete store[providerId]
-  fs.writeFileSync(file, JSON.stringify(store, null, 2))
-  try {
-    fs.chmodSync(file, 0o600)
-  } catch {
-    // best effort — keep the store's existing perms if chmod is unavailable
-  }
-  return true
-}
-
-/**
- * List the provider IDs that currently have a stored credential. Reads the auth
- * store directly (the SDK exposes no credential list). Returns [] if the store
- * is absent or unreadable.
- */
-export function listCredentialIds(): string[] {
-  const file = resolveAuthFilePath()
-  try {
-    const store = JSON.parse(fs.readFileSync(file, "utf8"))
-    return store && typeof store === "object" ? Object.keys(store) : []
-  } catch {
-    return []
-  }
-}
-
-/**
- * Read a provider's stored API key from opencode's auth store. Lets discovery
- * authenticate for providers whose key was set via `/add-provider-auth` (which
- * `getApiKey` — options.apiKey / env only — would miss). undefined if absent.
- */
-export function getStoredCredential(providerId: string): string | undefined {
-  try {
-    const store = JSON.parse(fs.readFileSync(resolveAuthFilePath(), "utf8"))
-    const entry = store?.[providerId]
-    return entry && entry.type === "api" && typeof entry.key === "string" ? entry.key : undefined
-  } catch {
-    return undefined
-  }
 }
