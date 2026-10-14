@@ -1,6 +1,6 @@
 {
   "name": "opencode-provider-manager",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Dynamic model discovery for OpenAI-compatible providers in opencode, plus provider management commands (pm-*), with models.dev enrichment",
   "type": "module",
   "main": "./server.js",

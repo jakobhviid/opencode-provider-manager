@@ -49,6 +49,18 @@ A provider is plain opencode config. Add a block with a `baseURL` and no `models
 
 opencode's native `providers` form (`"package": "aisdk:@ai-sdk/openai-compatible"`, `"settings": { "baseURL": … }`) works the same; `/pm-add-provider` writes whichever form the file already uses. opencode watches its config, so edits apply without a restart.
 
+### Show only your own providers
+
+opencode lists every provider it knows about — its own hosted models, plus any service you've logged into. To see only the providers you add, give the config an allow-list:
+
+```jsonc
+{
+  "enabled_providers": ["nous", "oMLX"]
+}
+```
+
+`/pm-add-provider` and `/pm-remove-provider` keep this list in step, so a provider you add appears in `/models` straight away. Without the key, every provider is shown.
+
 ### Where API keys come from
 1. `options.apiKey` (or `settings.apiKey`) in config — what `/pm-add-provider` writes when given a key
 2. The environment variable `OPENCODE_LOCAL_<PROVIDER_ID>_API_KEY`

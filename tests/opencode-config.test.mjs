@@ -84,3 +84,18 @@ test("setDefaultModel writes the model reference", () => {
 after(() => {
   fs.rmSync(CONFIG, { force: true })
 })
+
+test("add and remove keep an existing enabled_providers allow-list in step", () => {
+  fs.writeFileSync(CONFIG, `{ "provider": {}, "enabled_providers": ["nous"] }`)
+  upsertProvider("local", { name: "local", baseURL: "http://127.0.0.1:8000/v1" })
+  upsertProvider("local", { name: "local", baseURL: "http://127.0.0.1:8001/v1" })
+  assert.deepEqual(JSON.parse(fs.readFileSync(CONFIG, "utf8")).enabled_providers, ["nous", "local"])
+  removeProvider("local")
+  assert.deepEqual(JSON.parse(fs.readFileSync(CONFIG, "utf8")).enabled_providers, ["nous"])
+})
+
+test("without an enabled_providers list, none is created", () => {
+  fs.writeFileSync(CONFIG, `{ "provider": {} }`)
+  upsertProvider("local", { name: "local", baseURL: "http://127.0.0.1:8000/v1" })
+  assert.equal("enabled_providers" in JSON.parse(fs.readFileSync(CONFIG, "utf8")), false)
+})

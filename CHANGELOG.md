@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-10-14
+
+### Added
+- `/pm-add-provider` and `/pm-remove-provider` add and remove the provider in `enabled_providers` when the config has that allow-list, so a config that shows only your own providers stays that way without hand edits.
+
 ## [3.0.0] - 2026-10-14
 
 ### Changed

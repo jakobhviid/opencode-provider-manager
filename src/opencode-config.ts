@@ -45,8 +45,8 @@ function readText(file: string): string {
   }
 }
 
-function edit(text: string, at: JSONPath, value: unknown): string {
-  return applyEdits(text, modify(text, at, value, { formattingOptions: FORMATTING }))
+function edit(text: string, at: JSONPath, value: unknown, insert = false): string {
+  return applyEdits(text, modify(text, at, value, { formattingOptions: FORMATTING, isArrayInsertion: insert }))
 }
 
 function write(file: string, text: string): void {
@@ -54,7 +54,23 @@ function write(file: string, text: string): void {
   fs.writeFileSync(file, text)
 }
 
-type Parsed = { provider?: Record<string, unknown>; providers?: Record<string, unknown> } | undefined
+type Parsed =
+  | { provider?: Record<string, unknown>; providers?: Record<string, unknown>; enabled_providers?: unknown }
+  | undefined
+
+/**
+ * Keep `enabled_providers` — opencode's allow-list, which hides every provider not
+ * on it — in step with the providers this plugin adds and removes. Only edits a
+ * list the user has opted into; without one, every provider is shown.
+ */
+function syncEnabled(text: string, providerId: string, enabled: boolean): string {
+  const list = (parseJsonc(text) as Parsed)?.enabled_providers
+  if (!Array.isArray(list)) return text
+  const index = list.indexOf(providerId)
+  if (enabled && index === -1) return edit(text, ["enabled_providers", list.length], providerId, true)
+  if (!enabled && index !== -1) return edit(text, ["enabled_providers", index], undefined)
+  return text
+}
 
 /**
  * Which section defines a provider. opencode reads both the legacy `provider`
@@ -76,7 +92,8 @@ export function hasProvider(providerId: string): boolean {
  * Add an OpenAI-compatible provider with no `models` block, which is what makes
  * it eligible for discovery. Written in whichever style the file already uses.
  * An existing provider keeps its block: only its base URL (and key, if given)
- * change, so custom headers or settings survive. Returns the path written.
+ * change, so custom headers or settings survive. The provider joins
+ * `enabled_providers` when the file has one. Returns the path written.
  */
 export function upsertProvider(providerId: string, entry: { name: string; baseURL: string; apiKey?: string }): string {
   const file = resolveConfigFilePath()
@@ -100,13 +117,14 @@ export function upsertProvider(providerId: string, entry: { name: string; baseUR
       options: { baseURL: entry.baseURL, ...(entry.apiKey ? { apiKey: entry.apiKey } : {}) },
     })
   }
-  write(file, text)
+  write(file, syncEnabled(text, providerId, true))
   return file
 }
 
 /**
- * Remove a provider block from the global opencode config (comment-preserving).
- * Returns whether the provider existed and the file inspected.
+ * Remove a provider block from the global opencode config (comment-preserving),
+ * and from `enabled_providers` when the file has one. Returns whether the
+ * provider existed and the file inspected.
  */
 export function removeProvider(providerId: string): { file: string; existed: boolean } {
   const file = resolveConfigFilePath()
@@ -118,7 +136,7 @@ export function removeProvider(providerId: string): { file: string; existed: boo
     text = edit(text, [section, providerId], undefined)
     existed = true
   }
-  if (existed) write(file, text)
+  if (existed) write(file, syncEnabled(text, providerId, false))
   return { file, existed }
 }
 
