@@ -135,7 +135,7 @@ Originally created by [b3nw](https://github.com/b3nw) as [opencode-dynamic-custo
 
 ## AI disclosure
 
-Parts of this codebase were written with the assistance of AI coding agents (Claude Code, opencode, and others). All changes were reviewed by the maintainer.
+Parts of this codebase were written with the assistance of AI coding agents. All changes were reviewed by the maintainer.
 
 ## License
 
